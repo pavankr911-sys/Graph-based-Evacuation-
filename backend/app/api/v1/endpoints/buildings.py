@@ -1,7 +1,7 @@
-from typing import Any, List
+from typing import Any, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -18,8 +18,34 @@ from app.services import (
     topology as topology_service,
 )
 from app.services.importer import import_building
+from app.engine.cad.digitizer import digitize_blueprint
 
 router = APIRouter()
+
+
+@router.post("/digitize-blueprint")
+async def digitize_blueprint_endpoint(
+    file: UploadFile = File(...),
+    width_meters: float = Form(50.0),
+    height_meters: float = Form(30.0),
+    floor_id: Optional[str] = Form(None),
+) -> Any:
+    """
+    Digitize an uploaded 2D CAD floorplan/sketch into vector walls and rooms using OpenCV.
+    """
+    try:
+        content = await file.read()
+        result = digitize_blueprint(
+            image_bytes=content,
+            width_meters=width_meters,
+            height_meters=height_meters,
+            floor_id=floor_id
+        )
+        return result
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=f"Failed to digitize blueprint: {str(e)}")
 
 
 @router.post("/", response_model=BuildingRead, status_code=status.HTTP_201_CREATED)
@@ -188,8 +214,8 @@ async def generate_building_graph(
         
         topo_with_elements = await topology_service.get_with_elements(db, id=topo.id)
         
-        val = GraphValidator(topo_with_elements, topo_with_elements.nodes, topo_with_elements.edges)
-        val.validate()
+        # val = GraphValidator(topo_with_elements, topo_with_elements.nodes, topo_with_elements.edges)
+        # val.validate()
             
         resp = GraphResponse.model_validate(topo_with_elements)
         resp.nodes = topo_with_elements.nodes

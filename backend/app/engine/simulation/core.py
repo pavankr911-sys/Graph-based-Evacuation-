@@ -9,43 +9,130 @@ from app.schemas.simulation import AgentState, SimulationFrame, SimulationConfig
 
 from app.engine.simulation.demographics import generate_agent_profile
 from app.engine.simulation.pathfinding import Navigator
+from app.engine.simulation.hazard import HazardEngine
 import random
 import math
 
 logger = logging.getLogger(__name__)
 
 class EvacuationSimulation:
-    def __init__(self, topology: GraphTopology, config: SimulationConfigCreate):
+    def __init__(
+        self,
+        topology: GraphTopology,
+        config: SimulationConfigCreate,
+        initial_agents: Optional[List[AgentState]] = None
+    ):
         self.topology = topology
         self.config = config
         self.current_time_sec = 0.0
         self.frames: List[SimulationFrame] = []
-        self.agents: List[AgentState] = []
-        self.navigator = Navigator(topology)
         self.nodes = {n.id: n for n in topology.nodes}
+        self.exit_times: Dict[str, float] = {}
+        self.casualties: set = set()
+        self.tick_count = 0
         
-        self._initialize_agents()
+        # Initialize Hazard Engine
+        ignition_ids = [UUID(uid) for uid in self.config.hazard_ignition_nodes] if getattr(self.config, 'hazard_ignition_nodes', []) else []
+        if not ignition_ids and getattr(self.config, 'hazard_spread_rate', 0.0) > 0.01:
+            # Auto-assign an ignition node near room center if hazard spread is enabled
+            walkable_nodes = [n for n in topology.nodes if n.node_type == "WALKABLE"]
+            if walkable_nodes:
+                avg_x = sum(n.x for n in walkable_nodes) / len(walkable_nodes)
+                avg_y = sum(n.y for n in walkable_nodes) / len(walkable_nodes)
+                closest = min(walkable_nodes, key=lambda n: (n.x - avg_x)**2 + (n.y - avg_y)**2)
+                ignition_ids = [closest.id]
 
-    def _initialize_agents(self):
-        # Find all WALKABLE nodes in the topology
-        walkable_nodes = [n for n in self.topology.nodes if n.node_type == "WALKABLE"]
+        self.hazard_engine = HazardEngine(topology, ignition_ids, spread_rate=getattr(self.config, 'hazard_spread_rate', 0.1))
         
-        # If no walkable nodes exist, fallback
+        # Initialize Navigator with Algorithm
+        self.navigator = Navigator(topology, algorithm=getattr(self.config, 'routing_algorithm', "ALGO_A"), hazard_engine=self.hazard_engine)
+
+        # Initialize Outdoor Evacuation Assembly / Gathering Zone
+        ground_nodes = [n for n in topology.nodes if n.floor_number == 0]
+        if not ground_nodes:
+            ground_nodes = list(topology.nodes)
+        
+        if ground_nodes:
+            min_x = min(n.x for n in ground_nodes)
+            max_x = max(n.x for n in ground_nodes)
+            min_y = min(n.y for n in ground_nodes)
+            max_y = max(n.y for n in ground_nodes)
+            cx = (min_x + max_x) / 2.0
+            cy = (min_y + max_y) / 2.0
+        else:
+            min_x, max_x, min_y, max_y = 0.0, 50.0, 0.0, 30.0
+            cx, cy = 25.0, 15.0
+
+        ground_exits = [n for n in topology.nodes if n.node_type == "EXIT" and n.floor_number == 0]
+        if ground_exits:
+            # Pick primary ground exit (highest y / south exit)
+            pri_exit = max(ground_exits, key=lambda e: e.y)
+            vx = pri_exit.x - cx
+            vy = pri_exit.y - cy
+            dist = math.hypot(vx, vy)
+            if dist > 1.0:
+                ux, uy = vx / dist, vy / dist
+                ax = pri_exit.x + ux * 7.5
+                ay = pri_exit.y + uy * 7.5
+            else:
+                ax = pri_exit.x
+                ay = max_y + 7.5
+        else:
+            ax = cx
+            ay = max_y + 7.5
+
+        self.assembly_point = {
+            "x": round(ax, 2),
+            "y": round(ay, 2),
+            "radius": 4.5,
+            "name": "Evacuation Assembly Area"
+        }
+        self.agent_assembly_spots: Dict[str, Any] = {}
+        self.assembly_arrival_times: Dict[str, float] = {}
+        self.assembly_counter: int = 0
+        self.assembly_buffer_ticks: int = 0
+        
+        if initial_agents is not None:
+            self.agents = [a.model_copy(deep=True) for a in initial_agents]
+        else:
+            self.agents = []
+            self._initialize_agents()
+
+    @staticmethod
+    def generate_shared_agents(topology: GraphTopology, occupant_count: int) -> List[AgentState]:
+        """Generates a reproducible initial pool of agents for fair comparative benchmarking strictly inside the building."""
+        walkable_nodes = [n for n in topology.nodes if n.node_type in ["WALKABLE", "ROOM", "CORRIDOR"]]
         if not walkable_nodes:
-            logger.warning("No WALKABLE nodes found in topology. Using origin (0,0) for all agents.")
-        
-        for i in range(self.config.occupant_count):
-            # Generate demographic
+            walkable_nodes = [n for n in topology.nodes if n.node_type not in ["EXIT", "HAZARD_POINT"]]
+        if not walkable_nodes and topology.nodes:
+            walkable_nodes = list(topology.nodes)
+        exit_nodes = [n for n in topology.nodes if n.node_type == "EXIT"]
+
+        # Prefer strictly interior room nodes that are not right on exit thresholds
+        if exit_nodes and len(walkable_nodes) > occupant_count:
+            interior_candidates = [
+                n for n in walkable_nodes
+                if all((n.x - ex.x)**2 + (n.y - ex.y)**2 >= 4.0 for ex in exit_nodes if ex.floor_number == n.floor_number)
+            ]
+            if len(interior_candidates) >= occupant_count:
+                walkable_nodes = interior_candidates
+
+        agents = []
+        # Group interior nodes by floor for balanced multi-floor occupant distribution
+        floor_numbers = sorted(list({n.floor_number for n in walkable_nodes})) if walkable_nodes else [0]
+        nodes_by_floor = {f: [n for n in walkable_nodes if n.floor_number == f] for f in floor_numbers}
+
+        for i in range(occupant_count):
             profile_id, base_speed = generate_agent_profile()
-            
-            # Pick a starting room
-            start_node = random.choice(walkable_nodes) if walkable_nodes else None
+            target_floor = floor_numbers[i % len(floor_numbers)]
+            floor_pool = nodes_by_floor.get(target_floor) or walkable_nodes
+            start_node = random.choice(floor_pool) if floor_pool else None
             x = start_node.x if start_node else 0.0
             y = start_node.y if start_node else 0.0
             floor = start_node.floor_number if start_node else 0
             node_id_str = str(start_node.id) if start_node else None
             
-            self.agents.append(AgentState(
+            agents.append(AgentState(
                 id=str(uuid4()),
                 x=x,
                 y=y,
@@ -57,6 +144,48 @@ class EvacuationSimulation:
                 current_node_id=node_id_str,
                 target_node_id=None
             ))
+        return agents
+
+    def _initialize_agents(self):
+        self.agents = self.generate_shared_agents(self.topology, self.config.occupant_count)
+
+    def _get_agent_assembly_spot(self, agent_id: str):
+        """Calculates a natural gathering spot in the outdoor assembly area for an exited agent."""
+        if agent_id not in self.agent_assembly_spots:
+            idx = self.assembly_counter
+            self.assembly_counter += 1
+            if idx == 0:
+                ox, oy = 0.0, 0.0
+            else:
+                phi = 2.399963229728653  # golden angle
+                r = 0.75 * math.sqrt(idx)
+                theta = idx * phi
+                ox = r * math.cos(theta)
+                oy = r * math.sin(theta)
+            self.agent_assembly_spots[agent_id] = (
+                round(self.assembly_point["x"] + ox, 2),
+                round(self.assembly_point["y"] + oy, 2)
+            )
+        return self.agent_assembly_spots[agent_id]
+
+    def _move_exited_agent_to_assembly(self, agent: AgentState, dt: float):
+        """Moves an exited agent smoothly from the building exit to their outdoor assembly muster spot."""
+        target_x, target_y = self._get_agent_assembly_spot(agent.id)
+        dx = target_x - agent.x
+        dy = target_y - agent.y
+        dist = math.hypot(dx, dy)
+        move_dist = agent.base_speed * dt
+        if dist <= move_dist:
+            agent.x = target_x
+            agent.y = target_y
+            agent.velocity = 0.0
+            if agent.id not in self.assembly_arrival_times:
+                self.assembly_arrival_times[agent.id] = round(self.current_time_sec, 2)
+        else:
+            agent.x += (dx / dist) * move_dist
+            agent.y += (dy / dist) * move_dist
+            agent.velocity = agent.base_speed
+
 
     def _move_agent(self, agent: AgentState, dt: float):
         """Moves a single agent along the path."""
@@ -71,32 +200,49 @@ class EvacuationSimulation:
             agent.velocity = 0.0
             return
 
+        # Check if agent is engulfed in fatal fire
+        if getattr(self, 'hazard_engine', None) and self.hazard_engine.is_fatal(UUID(agent.current_node_id)):
+            self.casualties.add(agent.id)
+            agent.status = "TRAPPED"
+            agent.velocity = 0.0
+            return
+
         if current_node.node_type == "EXIT":
+            if agent.id not in self.exit_times:
+                self.exit_times[agent.id] = round(self.current_time_sec, 2)
             agent.status = "EXITED"
+            agent.exit_node_id = str(current_node.id)
+            agent.target_exit_id = str(current_node.id)
             agent.velocity = 0.0
             return
 
         if agent.status == "IDLE":
             agent.status = "MOVING"
 
-        # If we don't have a target, ask navigator
-        if not agent.target_node_id:
-            next_node = self.navigator.get_next_node(UUID(agent.current_node_id))
-            if not next_node:
-                # No path to exit
-                agent.status = "TRAPPED"
-                agent.velocity = 0.0
-                return
-            agent.target_node_id = str(next_node.id)
+        # Dynamically recalculate target node since flow field updates
+        next_node = self.navigator.get_next_node(agent.current_node_id)
+        if not next_node:
+            # No path to exit
+            agent.status = "TRAPPED"
+            agent.velocity = 0.0
+            agent.target_node_id = None
+            return
+        agent.target_node_id = str(next_node.id)
+
+        target_exit = self.navigator.get_target_exit_node(agent.current_node_id)
+        if target_exit:
+            agent.target_exit_id = str(target_exit.id)
 
         target_node = self.nodes.get(UUID(agent.target_node_id))
         
-        # Calculate vector to target
+        # Calculate 3D vector to target (including vertical stair distance across floors)
         dx = target_node.x - agent.x
         dy = target_node.y - agent.y
-        dist = math.hypot(dx, dy)
+        dz = abs(target_node.floor_number - agent.floor_number) * 3.5
+        dist = math.hypot(dx, dy, dz)
         
-        move_dist = agent.base_speed * dt
+        speed_factor = 0.6 if dz > 0 else 1.0  # Stair speed penalty per NFPA standard
+        move_dist = agent.base_speed * speed_factor * dt
         
         if move_dist >= dist:
             # Reached target node
@@ -108,8 +254,14 @@ class EvacuationSimulation:
             
             # Check if this new node is an exit
             if target_node.node_type == "EXIT":
+                if agent.id not in self.exit_times:
+                    self.exit_times[agent.id] = round(self.current_time_sec, 2)
                 agent.status = "EXITED"
+                agent.floor_number = 0  # Reached outdoor ground level
+                agent.exit_node_id = str(target_node.id)
+                agent.target_exit_id = str(target_node.id)
                 agent.velocity = 0.0
+                self._get_agent_assembly_spot(agent.id)
         else:
             # Move towards target
             if dist > 0:
@@ -120,16 +272,51 @@ class EvacuationSimulation:
     def tick(self):
         """Advances the simulation by 1 tick and records the frame."""
         dt = 1.0 / self.config.tick_rate_hz
+        self.tick_count += 1
         
+        # 1. Update Hazards
+        if getattr(self, 'hazard_engine', None) and any(v > 0 for v in self.hazard_engine.intensities.values()):
+            self.hazard_engine.tick(dt)
+            
+        # 2. Update Node Occupancy for Load-Aware algorithms
+        # Only recalculate flow field on first tick or every 1.5 seconds to maximize simulation speed
+        flow_interval = max(1, int(self.config.tick_rate_hz * 1.5))
+        if self.tick_count == 1 or (self.tick_count % flow_interval == 0):
+            node_occupancy: Dict[UUID, int] = {}
+            for agent in self.agents:
+                if agent.status in ["MOVING", "IDLE"] and agent.current_node_id:
+                    uid = UUID(agent.current_node_id)
+                    node_occupancy[uid] = node_occupancy.get(uid, 0) + 1
+                    
+            # 3. Update Flow Field (Dijkstra recalculates based on hazards/crowds)
+            self.navigator.update_flow_field(node_occupancy)
+        
+        # 4. Move Agents
         for agent in self.agents:
             if agent.status not in ["EXITED", "TRAPPED"]:
                 self._move_agent(agent, dt)
+            elif agent.status == "EXITED":
+                self._move_exited_agent_to_assembly(agent, dt)
         
+        # 5. Extract hazard state for frontend
+        hazard_data = []
+        if getattr(self, 'hazard_engine', None):
+            for node_id, intensity in self.hazard_engine.intensities.items():
+                if intensity > 0.01:
+                    node = self.nodes.get(node_id)
+                    if node:
+                        hazard_data.append({
+                            "node_id": str(node_id),
+                            "x": node.x,
+                            "y": node.y,
+                            "intensity": intensity
+                        })
+                        
         # Record frame
         frame = SimulationFrame(
-            time_sec=self.current_time_sec,
+            time_sec=round(self.current_time_sec, 2),
             agents=[a.model_copy() for a in self.agents],
-            hazards=[]
+            hazards=hazard_data
         )
         self.frames.append(frame)
         self.current_time_sec += dt
@@ -140,16 +327,62 @@ class EvacuationSimulation:
         dt = 1.0 / self.config.tick_rate_hz
         
         while self.current_time_sec <= self.config.max_time_sec:
-            # Check if all exited
-            if all(a.status == "EXITED" for a in self.agents):
-                # Record one final frame to ensure state consistency
-                self.tick()
-                logger.info("All agents exited. Simulation complete.")
-                break
-                
+            # Check if all agents have reached a terminal state (either EXITED or TRAPPED)
+            active_agents = [a for a in self.agents if a.status not in ["EXITED", "TRAPPED"]]
+            if not active_agents and self.current_time_sec > 0:
+                # Allow exited agents to walk and gather at the outdoor assembly point
+                all_arrived = all(a.id in self.assembly_arrival_times for a in self.agents if a.status == "EXITED")
+                if all_arrived or self.assembly_buffer_ticks >= int(self.config.tick_rate_hz * 8):
+                    self.tick()
+                    logger.info("All agents resolved and assembled outside. Simulation complete.")
+                    break
+                self.assembly_buffer_ticks += 1
+
             self.tick()
-            # Yield to event loop to not block FastAPI
-            await asyncio.sleep(0.001) 
+            # Non-blocking yield without Windows 15ms sleep delay
+            if self.tick_count % 15 == 0:
+                await asyncio.sleep(0) 
             
         logger.info(f"Simulation ended at {self.current_time_sec}s")
-        return [f.model_dump() for f in self.frames]
+
+        evacuated_count = sum(1 for a in self.agents if a.status == "EXITED")
+        trapped_count = sum(1 for a in self.agents if a.status != "EXITED")
+        casualties_count = len(self.casualties)
+        avg_evac_time = (
+            round(sum(self.exit_times.values()) / len(self.exit_times), 2)
+            if self.exit_times else 0.0
+        )
+        
+        # Build evacuation curve sampled across frames
+        evacuation_curve = []
+        sample_step = max(1, int(self.config.tick_rate_hz))
+        for idx in range(0, len(self.frames), sample_step):
+            f = self.frames[idx]
+            evac_at_t = sum(1 for a in f.agents if a.status == "EXITED")
+            evacuation_curve.append({"time": f.time_sec, "evacuated": evac_at_t})
+        
+        if self.frames and (not evacuation_curve or evacuation_curve[-1]["time"] != self.frames[-1].time_sec):
+            final_f = self.frames[-1]
+            evacuation_curve.append({
+                "time": final_f.time_sec,
+                "evacuated": sum(1 for a in final_f.agents if a.status == "EXITED")
+            })
+
+        building_evac_time = (
+            max(self.exit_times.values()) if self.exit_times else round(self.current_time_sec, 2)
+        )
+        metrics = {
+            "total_evacuation_time": building_evac_time,
+            "evacuated_count": evacuated_count,
+            "trapped_count": trapped_count,
+            "casualties": casualties_count,
+            "avg_evacuation_time": avg_evac_time,
+            "evacuation_curve": evacuation_curve
+        }
+
+        return {
+            "frames": [f.model_dump() for f in self.frames],
+            "metrics": metrics,
+            "assembly_point": self.assembly_point
+        }
+

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEditorStore } from "@/store/editorStore";
-import { MousePointer2, Square, Grid3x3, DoorOpen, ListStart, ArrowRightSquare, Undo, Redo, Trash2, LucideIcon } from "lucide-react";
+import { MousePointer2, Square, Grid3x3, DoorOpen, ListStart, ArrowRightSquare, Undo, Redo, Trash2, Flame, LucideIcon } from "lucide-react";
 import { ToolType } from "@/lib/editor/types";
 
 const TOOLS: { id: ToolType; icon: LucideIcon; label: string }[] = [
@@ -11,6 +11,7 @@ const TOOLS: { id: ToolType; icon: LucideIcon; label: string }[] = [
   { id: "DOOR", icon: DoorOpen, label: "Door (D)" },
   { id: "STAIR", icon: ListStart, label: "Stair (S)" },
   { id: "EXIT", icon: ArrowRightSquare, label: "Exit (E)" },
+  { id: "HAZARD", icon: Flame, label: "Hazard/Fire (H)" },
 ];
 
 export function EditorToolbar() {

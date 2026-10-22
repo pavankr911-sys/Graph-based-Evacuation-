@@ -22,6 +22,25 @@ interface EditorState {
   gridSnapping: boolean;
   gridResolution: number; // in meters, e.g., 0.5
   is3DMode: boolean;
+  blueprintImage: string | null;
+  blueprintOpacity: number;
+  blueprintScale: number;
+  blueprintOffsetX: number;
+  blueprintOffsetY: number;
+  blueprintImagesByFloor: Record<string, string>;
+  blueprintOpacitiesByFloor: Record<string, number>;
+  
+  // Multi-floor Actions & 3D Stacking
+  is3DStackedView: boolean;
+  setIs3DStackedView: (stacked: boolean) => void;
+  addFloor: (name?: string) => string;
+  deleteFloor: (id: string) => void;
+  renameFloor: (id: string, name: string) => void;
+  duplicateFloorStructure: (sourceFloorId: string, targetFloorId: string) => void;
+  setFloorBlueprint: (floorId: string, img: string | null) => void;
+  setFloorBlueprintOpacity: (floorId: string, opacity: number) => void;
+  getActiveBlueprint: () => string | null;
+  getActiveBlueprintOpacity: () => number;
   
   // Actions
   setFloors: (floors: Floor[]) => void;
@@ -30,9 +49,14 @@ interface EditorState {
   setGridSnapping: (snap: boolean) => void;
   setIs3DMode: (is3D: boolean) => void;
   setSelectedElementId: (id: string | null) => void;
+  setBlueprintImage: (img: string | null) => void;
+  setBlueprintOpacity: (opacity: number) => void;
+  setBlueprintScale: (scale: number) => void;
+  setBlueprintOffset: (x: number, y: number) => void;
   
   // Element Actions (with Undo/Redo tracking)
   addElement: (el: EditorElement) => void;
+  addElements: (els: EditorElement[]) => void;
   updateElement: (id: string, updates: Partial<EditorElement>) => void;
   deleteElement: (id: string) => void;
   
@@ -56,10 +80,14 @@ interface EditorState {
   simulationRun: any | null;
   playbackFrameIndex: number;
   isPlayingSimulation: boolean;
+  showExitIntelligence: boolean;
+  simulationOccupantCount: number;
   
   setSimulationRun: (run: any | null) => void;
   setPlaybackFrameIndex: (idx: number) => void;
   setIsPlayingSimulation: (isPlay: boolean) => void;
+  setShowExitIntelligence: (show: boolean) => void;
+  setSimulationOccupantCount: (count: number) => void;
 
   // Derived state helper
   getCurrentElements: () => EditorElement[];
@@ -91,6 +119,123 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   gridResolution: 0.5,
   is3DMode: false,
   selectedElementId: null,
+  
+  blueprintImage: null,
+  blueprintOpacity: 0.3,
+  blueprintScale: 1.0,
+  blueprintOffsetX: 0,
+  blueprintOffsetY: 0,
+  blueprintImagesByFloor: {},
+  blueprintOpacitiesByFloor: {},
+
+  is3DStackedView: true,
+  setIs3DStackedView: (stacked) => set({ is3DStackedView: stacked }),
+
+  addFloor: (name?: string) => {
+    const { floors } = get();
+    const maxNumber = floors.reduce((max, f) => Math.max(max, f.floor_number), -1);
+    const nextNumber = maxNumber + 1;
+    const newFloorId = uuidv4();
+    const newFloorName = name || (nextNumber === 0 ? "Ground Floor" : `Floor ${nextNumber}`);
+    const newFloor: Floor = {
+      id: newFloorId,
+      floor_number: nextNumber,
+      name: newFloorName,
+      grid_resolution: 0.5,
+    };
+    const updatedFloors = [...floors, newFloor].sort((a, b) => a.floor_number - b.floor_number);
+    set({ floors: updatedFloors, activeFloorId: newFloorId, selectedElementId: null });
+    return newFloorId;
+  },
+
+  deleteFloor: (id: string) => {
+    const { floors, activeFloorId, history, historyIndex } = get();
+    if (floors.length <= 1) return; // Keep at least one floor
+
+    const remainingFloors = floors.filter(f => f.id !== id);
+    const newActiveFloorId = activeFloorId === id ? remainingFloors[0].id : activeFloorId;
+
+    // Purge elements on deleted floor from current history
+    const currentElements = history[historyIndex];
+    const filteredElements = currentElements.filter(el => el.floor_id !== id);
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(filteredElements);
+
+    set({
+      floors: remainingFloors,
+      activeFloorId: newActiveFloorId,
+      selectedElementId: null,
+      history: newHistory,
+      historyIndex: newHistory.length - 1
+    });
+  },
+
+  renameFloor: (id: string, name: string) => {
+    const { floors } = get();
+    set({
+      floors: floors.map(f => f.id === id ? { ...f, name } : f)
+    });
+  },
+
+  duplicateFloorStructure: (sourceFloorId: string, targetFloorId: string) => {
+    const { history, historyIndex } = get();
+    const currentElements = history[historyIndex];
+    // Copy WALLS and STAIRS from source to target floor
+    const structureToCopy = currentElements.filter(
+      el => el.floor_id === sourceFloorId && (el.type === "WALL" || el.type === "STAIR" || el.type === "ROOM")
+    );
+    const duplicatedElements: EditorElement[] = structureToCopy.map(el => {
+      return {
+        ...el,
+        id: uuidv4(),
+        floor_id: targetFloorId
+      } as EditorElement;
+    });
+
+    if (duplicatedElements.length > 0) {
+      const newHistory = history.slice(0, historyIndex + 1);
+      newHistory.push([...currentElements, ...duplicatedElements]);
+      set({
+        history: newHistory,
+        historyIndex: newHistory.length - 1
+      });
+    }
+  },
+
+  setFloorBlueprint: (floorId: string, img: string | null) => {
+    const { blueprintImagesByFloor } = get();
+    const updated = { ...blueprintImagesByFloor };
+    if (img) {
+      updated[floorId] = img;
+    } else {
+      delete updated[floorId];
+    }
+    set({ blueprintImagesByFloor: updated, blueprintImage: img });
+  },
+
+  setFloorBlueprintOpacity: (floorId: string, opacity: number) => {
+    const { blueprintOpacitiesByFloor } = get();
+    set({
+      blueprintOpacitiesByFloor: { ...blueprintOpacitiesByFloor, [floorId]: opacity },
+      blueprintOpacity: opacity
+    });
+  },
+
+  getActiveBlueprint: () => {
+    const { activeFloorId, blueprintImagesByFloor, blueprintImage } = get();
+    if (activeFloorId && blueprintImagesByFloor[activeFloorId]) {
+      return blueprintImagesByFloor[activeFloorId];
+    }
+    return blueprintImage;
+  },
+
+  getActiveBlueprintOpacity: () => {
+    const { activeFloorId, blueprintOpacitiesByFloor, blueprintOpacity } = get();
+    if (activeFloorId && blueprintOpacitiesByFloor[activeFloorId] !== undefined) {
+      return blueprintOpacitiesByFloor[activeFloorId];
+    }
+    return blueprintOpacity;
+  },
 
   graph: null,
   selectedGraphNodeId: null,
@@ -119,6 +264,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setIs3DMode: (is3D) => set({ is3DMode: is3D }),
   setSelectedElementId: (id) => set({ selectedElementId: id, selectedGraphNodeId: null, selectedGraphEdgeId: null }),
   
+  setBlueprintImage: (img) => set({ blueprintImage: img }),
+  setBlueprintOpacity: (opacity) => set({ blueprintOpacity: opacity }),
+  setBlueprintScale: (scale) => set({ blueprintScale: scale }),
+  setBlueprintOffset: (x, y) => set({ blueprintOffsetX: x, blueprintOffsetY: y }),
+  
   addElement: (el) => {
     const { history, historyIndex } = get();
     const currentElements = history[historyIndex];
@@ -132,6 +282,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       history: newHistory,
       historyIndex: newHistory.length - 1,
       selectedElementId: el.id
+    });
+  },
+
+  addElements: (els) => {
+    const { history, historyIndex } = get();
+    const currentElements = history[historyIndex];
+    const newElements = [...currentElements, ...els];
+    
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(newElements);
+    
+    set({
+      history: newHistory,
+      historyIndex: newHistory.length - 1,
     });
   },
   
@@ -188,10 +352,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   simulationRun: null,
   playbackFrameIndex: 0,
   isPlayingSimulation: false,
+  showExitIntelligence: true,
+  simulationOccupantCount: 25,
 
   setSimulationRun: (run) => set({ simulationRun: run, playbackFrameIndex: 0, isPlayingSimulation: false }),
   setPlaybackFrameIndex: (idx) => set({ playbackFrameIndex: idx }),
   setIsPlayingSimulation: (isPlay) => set({ isPlayingSimulation: isPlay }),
+  setShowExitIntelligence: (show) => set({ showExitIntelligence: show }),
+  setSimulationOccupantCount: (count) => set({ simulationOccupantCount: count }),
   
   getCurrentElements: () => {
     const { history, historyIndex } = get();

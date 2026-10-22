@@ -20,7 +20,7 @@ engine_kwargs = {
 
 # SQLite specific settings for concurrency
 if settings.is_sqlite:
-    engine_kwargs["connect_args"] = {"check_same_thread": False}
+    engine_kwargs["connect_args"] = {"check_same_thread": False, "timeout": 15}
     logger.info(
         "Using SQLite local fallback database: %s",
         settings.async_database_url,
@@ -54,6 +54,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     if settings.is_sqlite:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
         cursor.close()
 
 

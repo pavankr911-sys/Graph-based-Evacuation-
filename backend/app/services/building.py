@@ -3,7 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, noload
 
 from app.models.building import Building, Floor
 from app.schemas.building import (
@@ -16,6 +16,9 @@ from app.services.base import CRUDBase
 
 
 class CRUDBuilding(CRUDBase[Building, BuildingCreate, BuildingUpdate]):
+    async def get_multi(self, db: AsyncSession, *, skip: int = 0, limit: int = 100) -> List[Building]:
+        result = await db.execute(select(Building).options(noload('*')).offset(skip).limit(limit))
+        return list(result.scalars().all())
     async def get_with_floors(
         self, db: AsyncSession, id: UUID
     ) -> Optional[Building]:

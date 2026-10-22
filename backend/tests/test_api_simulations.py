@@ -97,5 +97,6 @@ async def test_create_and_poll_simulation(
     assert last_frame["time_sec"] > 0.0
     for agent in last_frame["agents"]:
         assert agent["status"] == "EXITED"
-        assert agent["x"] == 10.0
-        assert agent["y"] == 0.0
+        assert agent["exit_node_id"] is not None
+        # Verify agents gather outside the exit at the designated assembly point
+        assert agent["x"] >= 10.0

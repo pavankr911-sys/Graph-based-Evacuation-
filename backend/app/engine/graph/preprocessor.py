@@ -49,7 +49,12 @@ def preprocess_building(export_data: BuildingExport) -> PreprocessedBuilding:
         # Rooms
         p_rooms = []
         for r_exp in sorted(f_exp.rooms, key=lambda r: str(r.id)):
-            p_rooms.append(PRoom(id=r_exp.id, name=r_exp.name, room_type=r_exp.room_type))
+            p_rooms.append(PRoom(
+                id=r_exp.id,
+                name=r_exp.name,
+                room_type=r_exp.room_type,
+                geometry=r_exp.geometry
+            ))
             
         # Walls
         p_walls = []

@@ -2,7 +2,7 @@
 
 import { useEditorStore } from "@/store/editorStore";
 import { Point, EditorElement, Room, Wall, Door, Stair, Exit } from "@/lib/editor/types";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 
 export function EditorCanvas() {
@@ -10,12 +10,144 @@ export function EditorCanvas() {
     activeFloorId, activeTool, gridSnapping, gridResolution, 
     getCurrentElements, addElement, updateElement, setSelectedElementId, selectedElementId,
     undo, redo, setActiveTool, graph, setSelectedGraphNodeId, setSelectedGraphEdgeId, selectedGraphNodeId, selectedGraphEdgeId,
-    simulationRun, playbackFrameIndex, showGraphOverlay
+    simulationRun, playbackFrameIndex, showGraphOverlay, blueprintImage, blueprintOpacity,
+    showExitIntelligence, floors, getActiveBlueprint, getActiveBlueprintOpacity
   } = useEditorStore();
 
   const elements = getCurrentElements().filter(el => el.floor_id === activeFloorId);
   const activeFloor = useEditorStore(s => s.floors.find(f => f.id === activeFloorId));
   const activeFloorNumber = activeFloor ? activeFloor.floor_number : -1;
+
+  const currentFrame = simulationRun?.results?.frames?.[playbackFrameIndex];
+  const activeBlueprint = getActiveBlueprint();
+  const activeBlueprintOpacity = getActiveBlueprintOpacity();
+
+  // Ghost outline of stairs on the floor directly below (ensures vertical shafts align easily)
+  const lowerFloorStairs = useMemo(() => {
+    if (activeFloorNumber <= 0) return [];
+    const lowerFloor = floors.find(f => f.floor_number === activeFloorNumber - 1);
+    if (!lowerFloor) return [];
+    return getCurrentElements().filter(el => el.type === "STAIR" && el.floor_id === lowerFloor.id) as Stair[];
+  }, [floors, activeFloorNumber, getCurrentElements]);
+
+  // Sorted exits on this floor for consistent A/B/C tagging across 2D, 3D, and HUD
+  const sortedFloorExits = useMemo(() => {
+    return (elements.filter(e => e.type === "EXIT" && e.floor_id === activeFloorId) as Exit[])
+      .sort((a, b) => a.position_x !== b.position_x ? a.position_x - b.position_x : a.position_y - b.position_y);
+  }, [elements, activeFloorId]);
+
+  const exitTagMap = useMemo(() => {
+    const map = new Map<string, string>();
+    sortedFloorExits.forEach((ex, idx) => {
+      map.set(ex.id, String.fromCharCode(65 + idx));
+    });
+    return map;
+  }, [sortedFloorExits]);
+
+  // Real-time Exit Intelligence map for in-canvas floating badges
+  const exitStatsMap = useMemo(() => {
+    if (!currentFrame) return new Map<string, { tag: string; queueCount: number; clearedCount: number; status: string; bg: string; stroke: string; dot: string; isBottleneck: boolean }>();
+    const activeAgents = currentFrame.agents?.filter((a: any) => a.floor_number === activeFloorNumber && a.status !== "EXITED" && a.status !== "TRAPPED") || [];
+    const evacuatedAgents = currentFrame.agents?.filter((a: any) => a.status === "EXITED") || [];
+
+    const map = new Map<string, { tag: string; queueCount: number; clearedCount: number; status: string; bg: string; stroke: string; dot: string; isBottleneck: boolean }>();
+    for (const ex of sortedFloorExits) {
+      const tag = exitTagMap.get(ex.id) || "A";
+      const targeting = activeAgents.filter((a: any) => {
+        if (a.target_exit_id && a.target_exit_id === ex.id) return true;
+        let closestDist = Infinity;
+        let closestId = null;
+        for (const other of sortedFloorExits) {
+          const d = Math.hypot(a.x - other.position_x, a.y - other.position_y);
+          if (d < closestDist) {
+            closestDist = d;
+            closestId = other.id;
+          }
+        }
+        return closestId === ex.id;
+      });
+
+      const cleared = evacuatedAgents.filter((a: any) => {
+        if (a.exit_node_id && a.exit_node_id === ex.id) return true;
+        let closestDist = Infinity;
+        let closestId = null;
+        for (const other of sortedFloorExits) {
+          const d = Math.hypot(a.x - other.position_x, a.y - other.position_y);
+          if (d < closestDist) {
+            closestDist = d;
+            closestId = other.id;
+          }
+        }
+        return closestId === ex.id;
+      });
+
+      const q = targeting.length;
+      const c = cleared.length;
+      const isBottleneck = q >= 7;
+      const status = isBottleneck ? "BOTTLENECK" : q >= 3 ? "MODERATE" : "FREE";
+      const bg = isBottleneck ? "#7f1d1d" : q >= 3 ? "#78350f" : "#064e3b";
+      const stroke = isBottleneck ? "#ef4444" : q >= 3 ? "#f59e0b" : "#10b981";
+      const dot = isBottleneck ? "#ef4444" : q >= 3 ? "#fbbf24" : "#34d399";
+
+      map.set(ex.id, { tag, queueCount: q, clearedCount: c, status, bg, stroke, dot, isBottleneck });
+    }
+    return map;
+  }, [currentFrame, sortedFloorExits, exitTagMap, activeFloorNumber]);
+
+  // Pre-index graph nodes for O(1) edge lookup (eliminates 160M operations per frame)
+  const graphNodeMap = useMemo(() => {
+    if (!graph?.nodes) return new Map();
+    return new Map(graph.nodes.map(n => [n.id, n]));
+  }, [graph?.nodes]);
+
+  // Memoized Graph Edges (only recomputes when graph/floor/selection changes, NOT on animation frame)
+  const renderedGraphEdges = useMemo(() => {
+    if (!showGraphOverlay || !graph?.edges) return null;
+    return graph.edges.map(edge => {
+      const sourceNode = graphNodeMap.get(edge.source_node_id);
+      const targetNode = graphNodeMap.get(edge.target_node_id);
+      if (!sourceNode || !targetNode) return null;
+
+      const isSourceActive = sourceNode.floor_number === activeFloorNumber;
+      const isTargetActive = targetNode.floor_number === activeFloorNumber;
+      if (!isSourceActive && !isTargetActive) return null;
+
+      const isSelected = selectedGraphEdgeId === edge.id;
+      const isStair = sourceNode.floor_number !== targetNode.floor_number;
+
+      return (
+        <line
+          key={edge.id}
+          x1={sourceNode.x} y1={sourceNode.y}
+          x2={targetNode.x} y2={targetNode.y}
+          className={`cursor-pointer transition-colors ${isStair ? 'stroke-purple-400 stroke-dasharray-[0.5,0.5]' : 'stroke-purple-500'} ${isSelected ? 'stroke-[0.3]' : 'stroke-[0.1] opacity-60 hover:opacity-100 hover:stroke-[0.15]'}`}
+          onClick={(e) => { e.stopPropagation(); setSelectedGraphEdgeId(edge.id); }}
+        />
+      );
+    });
+  }, [showGraphOverlay, graph?.edges, graphNodeMap, activeFloorNumber, selectedGraphEdgeId]);
+
+  // Memoized Graph Nodes
+  const renderedGraphNodes = useMemo(() => {
+    if (!showGraphOverlay || !graph?.nodes) return null;
+    return graph.nodes.filter(n => n.floor_number === activeFloorNumber).map(node => {
+      const isSelected = selectedGraphNodeId === node.id;
+      let fill = "fill-slate-400";
+      if (node.node_type === "EXIT") fill = "fill-emerald-500";
+      else if (node.node_type === "STAIR") fill = "fill-purple-500";
+      else if (node.node_type === "DOOR") fill = "fill-amber-500";
+
+      return (
+        <circle
+          key={node.id}
+          cx={node.x} cy={node.y}
+          r={isSelected ? 0.3 : 0.2}
+          className={`cursor-pointer transition-all ${fill} ${isSelected ? 'stroke-white stroke-[0.1]' : 'opacity-80 hover:opacity-100 hover:r-[0.25]'}`}
+          onClick={(e) => { e.stopPropagation(); setSelectedGraphNodeId(node.id); }}
+        />
+      );
+    });
+  }, [showGraphOverlay, graph?.nodes, activeFloorNumber, selectedGraphNodeId]);
 
   
   const svgRef = useRef<SVGSVGElement>(null);
@@ -71,6 +203,7 @@ export function EditorCanvas() {
           case 'd': setActiveTool('DOOR'); break;
           case 's': setActiveTool('STAIR'); break;
           case 'e': setActiveTool('EXIT'); break;
+          case 'h': setActiveTool('HAZARD'); break;
         }
       }
     };
@@ -109,6 +242,10 @@ export function EditorCanvas() {
         addElement({ ...baseObj, type: "STAIR", position_x: snapped.x, position_y: snapped.y, width_meters: 1.5, is_upward: false } as Stair);
       } else if (activeTool === "EXIT") {
         addElement({ ...baseObj, type: "EXIT", position_x: snapped.x, position_y: snapped.y, width_meters: 2.0, discharge_rate: 1.5, is_usable: true } as Exit);
+      } else if (activeTool === "HAZARD") {
+        addElement({ ...baseObj, type: "HAZARD", position_x: snapped.x, position_y: snapped.y, intensity: 1.0 } as any);
+      } else if (activeTool === "HAZARD") {
+        addElement({ ...baseObj, type: "HAZARD", position_x: snapped.x, position_y: snapped.y, intensity: 1.0 } as any);
       }
     }
   };
@@ -203,7 +340,40 @@ export function EditorCanvas() {
             <line x1="0" y1="-1000" x2="0" y2="1000" className="stroke-green-300 stroke-[0.1]" />
           </g>
 
-          {/* Rooms */}
+          {/* Blueprint Background for Active Floor */}
+            {activeBlueprint && (
+              <image href={activeBlueprint} x="-10" y="-10" width="20" height="20" opacity={activeBlueprintOpacity} preserveAspectRatio="xMidYMid slice" className="pointer-events-none" />
+            )}
+
+          {/* Vertical Shaft Alignment Guide: Ghost outline of stairs from the floor below */}
+          {lowerFloorStairs.map((stair) => (
+            <g key={`ghost-stair-${stair.id}`} className="pointer-events-none select-none opacity-50">
+              <rect
+                x={stair.position_x - 0.75}
+                y={stair.position_y - 0.75}
+                width={1.5}
+                height={1.5}
+                fill="#f3e8ff"
+                stroke="#a855f7"
+                strokeWidth={0.08}
+                strokeDasharray="0.3 0.15"
+                rx={0.2}
+              />
+              <text
+                x={stair.position_x}
+                y={stair.position_y - 0.9}
+                textAnchor="middle"
+                fill="#9333ea"
+                fontSize="0.32"
+                fontWeight="bold"
+                fontFamily="sans-serif"
+              >
+                ⤓ STAIR BELOW
+              </text>
+            </g>
+          ))}
+
+            {/* Rooms */}
           {elements.filter(e => e.type === "ROOM").map(el => {
             const room = el as Room;
             const c = room.geometry.coordinates;
@@ -233,93 +403,209 @@ export function EditorCanvas() {
             );
           })}
 
-          {/* Point Elements (Doors, Stairs, Exits) */}
-          {elements.filter(e => ["DOOR", "STAIR", "EXIT"].includes(e.type)).map(el => {
+          {/* Point Elements (Doors, Stairs, Exits, Hazards) */}
+          {elements.filter(e => ["DOOR", "STAIR", "EXIT", "HAZARD"].includes(e.type)).map(el => {
             const eAny = el as any;
             const isExit = el.type === "EXIT";
             const isDoor = el.type === "DOOR";
-            const fill = isExit ? "#10b981" : (isDoor ? "#f59e0b" : "#64748b");
+            const isHazard = el.type === "HAZARD";
+            const fill = isHazard ? "#ef4444" : isExit ? "#10b981" : (isDoor ? "#f59e0b" : "#64748b");
             const size = 0.8;
+            const intel = isExit ? exitStatsMap.get(el.id) : null;
             
             return (
-              <rect
-                key={el.id}
-                x={eAny.position_x - size/2}
-                y={eAny.position_y - size/2}
-                width={size}
-                height={size}
-                fill={fill}
-                rx={0.1}
-                className={`stroke-white stroke-[0.1] ${activeTool === 'SELECT' ? 'cursor-pointer' : 'pointer-events-none'}`}
-                onPointerDown={(e) => handleElementClick(e, el.id)}
-              />
+              <g key={el.id}>
+                <rect
+                  x={eAny.position_x - size/2}
+                  y={eAny.position_y - size/2}
+                  width={size}
+                  height={size}
+                  fill={fill}
+                  rx={isHazard ? 0.4 : 0.1}
+                  className={`stroke-white stroke-[0.1] ${activeTool === 'SELECT' ? 'cursor-pointer' : 'pointer-events-none'}`}
+                  onPointerDown={(e) => handleElementClick(e, el.id)}
+                />
+
+                {/* Floating Real-Time Exit Identification & Intelligence Badge */}
+                {isExit && (
+                  <g transform={`translate(${eAny.position_x}, ${eAny.position_y - 1.25})`} className="pointer-events-none select-none">
+                    {showExitIntelligence && simulationRun && intel ? (
+                      <>
+                        <rect
+                          x="-2.5"
+                          y="-0.45"
+                          width="5.0"
+                          height="0.8"
+                          rx="0.4"
+                          fill={intel.bg}
+                          stroke={intel.stroke}
+                          strokeWidth="0.08"
+                          className={intel.isBottleneck ? "animate-pulse" : ""}
+                        />
+                        <rect
+                          x="-2.35"
+                          y="-0.35"
+                          width="0.8"
+                          height="0.6"
+                          rx="0.2"
+                          fill="#ffffff"
+                        />
+                        <text
+                          x="-1.95"
+                          y="0.08"
+                          textAnchor="middle"
+                          fill="#0f172a"
+                          fontSize="0.38"
+                          fontWeight="900"
+                          fontFamily="monospace"
+                        >
+                          {intel.tag}
+                        </text>
+                        <text
+                          x="0.25"
+                          y="0.08"
+                          textAnchor="middle"
+                          fill="#ffffff"
+                          fontSize="0.34"
+                          fontWeight="bold"
+                          fontFamily="monospace"
+                        >
+                          {`👥 ${intel.queueCount}  ✓ ${intel.clearedCount}`}
+                        </text>
+                      </>
+                    ) : (
+                      <>
+                        <rect
+                          x="-1.4"
+                          y="-0.4"
+                          width="2.8"
+                          height="0.7"
+                          rx="0.35"
+                          fill="#0f172a"
+                          stroke="#10b981"
+                          strokeWidth="0.06"
+                          opacity="0.9"
+                        />
+                        <text
+                          x="0"
+                          y="0.08"
+                          textAnchor="middle"
+                          fill="#34d399"
+                          fontSize="0.32"
+                          fontWeight="bold"
+                          fontFamily="monospace"
+                        >
+                          {`🚪 EXIT ${exitTagMap.get(el.id) || ""}`}
+                        </text>
+                      </>
+                    )}
+                  </g>
+                )}
+              </g>
             );
           })}
 
           
-          {/* Graph Edges */}
-          {showGraphOverlay && graph && graph.edges.map(edge => {
-            const sourceNode = graph.nodes.find(n => n.id === edge.source_node_id);
-            const targetNode = graph.nodes.find(n => n.id === edge.target_node_id);
-            if (!sourceNode || !targetNode) return null;
-            
-            const isSourceActive = sourceNode.floor_number === activeFloorNumber;
-            const isTargetActive = targetNode.floor_number === activeFloorNumber;
-            if (!isSourceActive && !isTargetActive) return null;
-            
-            const isSelected = selectedGraphEdgeId === edge.id;
-            const isStair = sourceNode.floor_number !== targetNode.floor_number;
-            
-            return (
-              <line
-                key={edge.id}
-                x1={sourceNode.x} y1={sourceNode.y}
-                x2={targetNode.x} y2={targetNode.y}
-                className={`cursor-pointer transition-colors ${isStair ? 'stroke-purple-400 stroke-dasharray-[0.5,0.5]' : 'stroke-purple-500'} ${isSelected ? 'stroke-[0.3]' : 'stroke-[0.1] opacity-60 hover:opacity-100 hover:stroke-[0.15]'}`}
-                onClick={(e) => { e.stopPropagation(); setSelectedGraphEdgeId(edge.id); }}
-              />
-            );
-          })}
+          {/* Memoized Graph Edges (O(1) lookups, 0 recomputations on animation ticks) */}
+          {renderedGraphEdges}
 
-          {/* Graph Nodes */}
-          {showGraphOverlay && graph && graph.nodes.filter(n => n.floor_number === activeFloorNumber).map(node => {
-            const isSelected = selectedGraphNodeId === node.id;
-            let fill = "fill-slate-400";
-            if (node.node_type === "EXIT") fill = "fill-emerald-500";
-            else if (node.node_type === "STAIR") fill = "fill-purple-500";
-            else if (node.node_type === "DOOR") fill = "fill-amber-500";
-            
-            return (
-              <circle
-                key={node.id}
-                cx={node.x} cy={node.y}
-                r={isSelected ? 0.3 : 0.2}
-                className={`cursor-pointer transition-all ${fill} ${isSelected ? 'stroke-white stroke-[0.1]' : 'opacity-80 hover:opacity-100 hover:r-[0.25]'}`}
-                onClick={(e) => { e.stopPropagation(); setSelectedGraphNodeId(node.id); }}
-              />
-            );
-          })}
+          {/* Memoized Graph Nodes */}
+          {renderedGraphNodes}
 
-          {/* Simulation Agents */}
+          {/* Simulation Hazards (Fire/Smoke) */}
+          {simulationRun && simulationRun.results?.frames && simulationRun.results.frames[playbackFrameIndex] && (
+            <g className="hazards-layer">
+              {simulationRun.results.frames[playbackFrameIndex].hazards?.map((h: any) => (
+                <circle
+                  key={`hazard-${h.node_id}`}
+                  cx={h.x}
+                  cy={h.y}
+                  r={1.0 * h.intensity}
+                  fill="#ef4444"
+                  opacity={Math.min(0.8, h.intensity)}
+                  className="transition-all duration-200 pointer-events-none"
+                  style={{ filter: "blur(2px)" }}
+                />
+              ))}
+            </g>
+          )}
+
+          {/* Outdoor Evacuation Assembly / Gathering Zone */}
+          {simulationRun && activeFloorNumber === 0 && (
+            (() => {
+              const ap = simulationRun?.results?.assembly_point || { x: 25, y: 35, radius: 4.5 };
+              const exitedCount = simulationRun.results?.frames?.[playbackFrameIndex]?.agents?.filter((a: any) => a.status === "EXITED").length || 0;
+              return (
+                <g id="assembly-point-zone" className="pointer-events-none select-none">
+                  <circle
+                    cx={ap.x}
+                    cy={ap.y}
+                    r={ap.radius || 4.5}
+                    fill="rgba(16, 185, 129, 0.08)"
+                    stroke="#10b981"
+                    strokeWidth={0.15}
+                    strokeDasharray="0.6 0.3"
+                  />
+                  <circle
+                    cx={ap.x}
+                    cy={ap.y}
+                    r={0.4}
+                    fill="#10b981"
+                  />
+                  <text
+                    x={ap.x}
+                    y={ap.y - (ap.radius || 4.5) - 0.4}
+                    textAnchor="middle"
+                    fill="#059669"
+                    fontSize="0.8"
+                    fontWeight="bold"
+                  >
+                    🟢 EVACUATION ASSEMBLY POINT (MUSTER ZONE){exitedCount > 0 ? ` • ${exitedCount} SAFE` : ""}
+                  </text>
+                </g>
+              );
+            })()
+          )}
+
+          {/* Simulation Agents (Both in-building and gathered outside in assembly area) */}
           {simulationRun && simulationRun.results?.frames && simulationRun.results.frames[playbackFrameIndex] && (
             <g className="agents-layer">
               {simulationRun.results.frames[playbackFrameIndex].agents
-                .filter((a: any) => a.floor_number === activeFloorNumber && a.status !== "EXITED")
+                .filter((a: any) => {
+                  if (activeFloorNumber === 0) {
+                    // On Ground floor, show ground occupants and outdoor gathered evacuees
+                    return a.floor_number === 0 || a.status === "EXITED";
+                  }
+                  // On upper floors, only show non-exited occupants inside that floor
+                  return a.floor_number === activeFloorNumber && a.status !== "EXITED";
+                })
                 .map((agent: any) => {
-                  let fill = "#3498db"; // ADULT
-                  if (agent.profile === "ELDERLY") fill = "#9b59b6";
-                  else if (agent.profile === "CHILD") fill = "#f1c40f";
-                  else if (agent.profile === "DISABLED") fill = "#e74c3c";
+                  const isExited = agent.status === "EXITED";
+                  let fill = isExited ? "#10b981" : "#3498db"; // ADULT
+                  if (!isExited) {
+                    if (agent.profile === "ELDERLY") fill = "#9b59b6";
+                    else if (agent.profile === "CHILD") fill = "#f1c40f";
+                    else if (agent.profile === "DISABLED") fill = "#e74c3c";
+                  }
                   
                   return (
-                    <circle
-                      key={agent.id}
-                      cx={agent.x}
-                      cy={agent.y}
-                      r={0.3}
-                      fill={fill}
-                      className="stroke-white stroke-[0.05] transition-all duration-200"
-                    />
+                    <g key={agent.id}>
+                      <circle
+                        cx={agent.x}
+                        cy={agent.y}
+                        r={isExited ? 0.34 : 0.3}
+                        fill={fill}
+                        className="stroke-white stroke-[0.05] transition-all duration-200"
+                      />
+                      {isExited && (
+                        <circle
+                          cx={agent.x}
+                          cy={agent.y}
+                          r={0.12}
+                          fill="#ffffff"
+                        />
+                      )}
+                    </g>
                   );
                 })}
             </g>
@@ -344,7 +630,7 @@ export function EditorCanvas() {
           )}
           
           {/* Tool Cursor Preview (for point elements) */}
-          {!isDrawing && activeFloorId && ["DOOR", "STAIR", "EXIT"].includes(activeTool) && (
+          {!isDrawing && activeFloorId && ["DOOR", "STAIR", "EXIT", "HAZARD"].includes(activeTool) && (
             <circle cx={mousePos.x} cy={mousePos.y} r={0.5} className="fill-none stroke-slate-400 stroke-[0.1] stroke-dasharray-[0.2,0.2]" />
           )}
         </g>

@@ -172,50 +172,75 @@ class GraphGenerator:
             connected_node_ids.add(e.target_node_id)
             
         for n_id, node in self.nodes.items():
-            if node.node_type in ("DOOR", "EXIT"):
+            if node.node_type in ("DOOR", "EXIT", "STAIR"):
                 if n_id not in connected_node_ids:
-                    # Isolated door/exit detected (possible if wall thickness overlaps entirely)
-                    # We won't crash, but log or handle. In a strict system, this might raise.
-                    pass 
+                    # Isolated door/exit/stair detected: connect to nearest walkable node on the same floor
+                    candidates = [
+                        (other_id, other) for other_id, other in self.nodes.items()
+                        if other.floor_number == node.floor_number and other.node_type == "WALKABLE"
+                    ]
+                    if candidates:
+                        closest_id, closest_node = min(
+                            candidates,
+                            key=lambda item: (item[1].x - node.x)**2 + (item[1].y - node.y)**2
+                        )
+                        dist = math.hypot(closest_node.x - node.x, closest_node.y - node.y)
+                        if dist <= 3.5:
+                            e_id = _deterministic_edge_id(self.topology_id, n_id, closest_id)
+                            if e_id not in self.edges:
+                                self.edges[e_id] = GraphEdgeCreate(
+                                    topology_id=self.topology_id,
+                                    source_node_id=n_id,
+                                    target_node_id=closest_id,
+                                    length_meters=dist,
+                                    max_flow_rate=1.33,
+                                    width_meters=1.0,
+                                    bidirectional=True,
+                                    base_traversal_time=dist / 1.0
+                                )
+                                connected_node_ids.add(n_id) 
 
     def _stage_6_and_7_vertical_connections(self):
-        """Connect stairs vertically across floors."""
+        """Connect stairs vertically across floors with spatial alignment tolerance."""
         floors = self.building.sorted_floors
         
         for i in range(len(floors) - 1):
             lower_floor = floors[i]
             upper_floor = floors[i+1]
             
-            # upper_stair_map: (x, y) -> (node_id, node)
-            upper_stair_map = { (n.x, n.y): (n_id, n) for n_id, n in self.stair_nodes[upper_floor.id] }
-            
-            for l_node_id, l_node in self.stair_nodes[lower_floor.id]:
-                coord = (l_node.x, l_node.y)
-                if coord in upper_stair_map:
-                    u_node_id, u_node = upper_stair_map[coord]
+            upper_stairs = self.stair_nodes.get(upper_floor.id, [])
+            if not upper_stairs:
+                continue
+
+            for l_node_id, l_node in self.stair_nodes.get(lower_floor.id, []):
+                # Find matching stair node on upper floor (exact coordinate or nearest within 3.5m tolerance)
+                candidates = [
+                    (u_id, u_node, math.hypot(u_node.x - l_node.x, u_node.y - l_node.y))
+                    for u_id, u_node in upper_stairs
+                ]
+                # Filter to stairs within 3.5m radius
+                valid_candidates = [c for c in candidates if c[2] <= 3.5]
+                
+                if valid_candidates:
+                    u_node_id, u_node, horiz_dist = min(valid_candidates, key=lambda c: c[2])
                     
                     e_id = _deterministic_edge_id(self.topology_id, l_node_id, u_node_id)
                     if e_id not in self.edges:
-                        # 3.5m inter-floor height, zero horizontal run
-                        vertical_dist = upper_floor.elevation_z - lower_floor.elevation_z
-                        
-                        # Stair width defaults to grid res for a single cell connection
-                        stair_width = lower_floor.grid_resolution
-                        
-                        # Capacity flow for stairs is slightly lower (use multiplier 0.6 from ASSUMPTIONS.md, 
-                        # actually assumptions says speed is 0.6. Flow capacity is generally similar or slightly lower.)
-                        # We'll use standard flow capacity 1.33 but traversal time is penalized.
+                        vertical_dist = abs(upper_floor.elevation_z - lower_floor.elevation_z)
+                        if vertical_dist < 0.1:
+                            vertical_dist = 3.5 # Standard floor height fallback
+                            
+                        total_dist = math.sqrt(vertical_dist**2 + horiz_dist**2)
+                        stair_width = max(1.0, lower_floor.grid_resolution)
                         flow = stair_width * 1.33
-                        
-                        # Traversal time = distance / (base_speed * stair_penalty)
                         stair_penalty = 0.6
-                        base_time = vertical_dist / (1.0 * stair_penalty)
+                        base_time = total_dist / (1.0 * stair_penalty)
                         
                         edge = GraphEdgeCreate(
                             topology_id=self.topology_id,
                             source_node_id=l_node_id,
                             target_node_id=u_node_id,
-                            length_meters=vertical_dist,
+                            length_meters=total_dist,
                             max_flow_rate=flow,
                             width_meters=stair_width,
                             bidirectional=True,

@@ -41,6 +41,7 @@ class PRoom:
     id: UUID
     name: str
     room_type: str
+    geometry: Optional[Dict[str, Any]] = None
 
 @dataclass
 class PStair:
