@@ -4,7 +4,7 @@ import { useEditorStore } from "@/store/editorStore";
 import { Point, EditorElement, Room, Wall, Door, Stair, Exit } from "@/lib/editor/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { Flame, Trash2 } from "lucide-react";
+import { Flame, Trash2, ListStart } from "lucide-react";
 
 export function EditorCanvas() {
   const { 
@@ -247,8 +247,34 @@ export function EditorCanvas() {
       if (activeTool === "DOOR") {
         addElement({ ...baseObj, type: "DOOR", position_x: snapped.x, position_y: snapped.y, width_meters: 1.0, is_open: true } as Door);
       } else if (activeTool === "STAIR") {
-        addElement({ ...baseObj, type: "STAIR", position_x: snapped.x, position_y: snapped.y, width_meters: 1.5, is_upward: false } as Stair);
+        let placeX = snapped.x;
+        let placeY = snapped.y;
+        // Auto-snap to lower floor stair shaft if clicked within 1.8m
+        if (lowerFloorStairs.length > 0) {
+          let closestDist = Infinity;
+          let closestStair: Stair | null = null;
+          for (const s of lowerFloorStairs) {
+            const d = Math.hypot(s.position_x - snapped.x, s.position_y - snapped.y);
+            if (d < closestDist) {
+              closestDist = d;
+              closestStair = s;
+            }
+          }
+          if (closestStair && closestDist <= 1.8) {
+            placeX = closestStair.position_x;
+            placeY = closestStair.position_y;
+          }
+        }
+        addElement({ ...baseObj, type: "STAIR", position_x: placeX, position_y: placeY, width_meters: 1.5, is_upward: false } as Stair);
       } else if (activeTool === "EXIT") {
+        if (activeFloorNumber > 0) {
+          alert(
+            `🚪 Exterior Building Discharge Notice:\n\n` +
+            `In multi-story building architecture, exterior exit doors discharge to safety exclusively on the Ground Floor (Level 0).\n\n` +
+            `On Floor ${activeFloorNumber}, please place a Staircase (S) to connect occupants down to the Ground Floor exits.`
+          );
+          return;
+        }
         addElement({ ...baseObj, type: "EXIT", position_x: snapped.x, position_y: snapped.y, width_meters: 2.0, discharge_rate: 1.5, is_usable: true } as Exit);
       } else if (activeTool === "HAZARD") {
         // Toggle behavior: if clicking near an existing hazard on this floor, extinguish/remove it
@@ -502,12 +528,99 @@ export function EditorCanvas() {
             );
           })}
 
-          {/* Point Elements (Doors, Stairs, Exits) */}
-          {elements.filter(e => ["DOOR", "STAIR", "EXIT"].includes(e.type)).map(el => {
+          {/* Architectural Staircases / Vertical Egress Shafts */}
+          {elements.filter(e => e.type === "STAIR").map((el, idx) => {
+            const stair = el as Stair;
+            const isSelected = selectedElementId === stair.id;
+            const w = stair.width_meters || 1.5;
+            const hasLowerStair = lowerFloorStairs.some(ls => Math.hypot(ls.position_x - stair.position_x, ls.position_y - stair.position_y) <= 1.8);
+            const isGround = activeFloorNumber <= 0;
+            const shaftTag = String.fromCharCode(65 + idx);
+            const statusColor = isGround ? "#a855f7" : hasLowerStair ? "#22c55e" : "#f97316";
+
+            return (
+              <g 
+                key={stair.id}
+                className="cursor-pointer group"
+                onPointerDown={(e) => handleElementClick(e, stair.id)}
+              >
+                {/* Stairwell Outer Perimeter */}
+                <rect
+                  x={stair.position_x - w/2}
+                  y={stair.position_y - w/2}
+                  width={w}
+                  height={w}
+                  fill="#faf5ff"
+                  stroke={isSelected ? "#38bdf8" : "#9333ea"}
+                  strokeWidth={isSelected ? 0.16 : 0.08}
+                  rx={0.15}
+                />
+                {/* Architectural Step Treads */}
+                {[-0.32, -0.12, 0.08, 0.28].map((off, sIdx) => (
+                  <line
+                    key={`tread-${sIdx}`}
+                    x1={stair.position_x - (w/2 - 0.15)}
+                    y1={stair.position_y + off * w}
+                    x2={stair.position_x + (w/2 - 0.15)}
+                    y2={stair.position_y + off * w}
+                    stroke="#c084fc"
+                    strokeWidth={0.06}
+                    className="pointer-events-none"
+                  />
+                ))}
+                {/* Center Directional Indicator */}
+                <text
+                  x={stair.position_x}
+                  y={stair.position_y + 0.12}
+                  textAnchor="middle"
+                  fill="#6b21a8"
+                  fontSize="0.38"
+                  fontWeight="900"
+                  fontFamily="sans-serif"
+                  className="pointer-events-none select-none"
+                >
+                  {isGround ? "⤒ UP" : "⤓ DOWN"}
+                </text>
+
+                {/* Floating Stair Shaft Tag & Vertical Connection Status */}
+                <g transform={`translate(${stair.position_x}, ${stair.position_y - (w/2 + 0.55)})`} className="pointer-events-none select-none">
+                  <rect
+                    x="-2.3"
+                    y="-0.35"
+                    width="4.6"
+                    height="0.7"
+                    rx="0.35"
+                    fill="#0f172a"
+                    stroke={statusColor}
+                    strokeWidth="0.08"
+                    opacity="0.95"
+                  />
+                  <text
+                    x="0"
+                    y="0.12"
+                    textAnchor="middle"
+                    fill="#ffffff"
+                    fontSize="0.3"
+                    fontWeight="bold"
+                    fontFamily="monospace"
+                  >
+                    {isGround 
+                      ? `🪜 STAIR ${shaftTag} (LEADS UP)`
+                      : hasLowerStair 
+                        ? `✓ STAIR ${shaftTag} ⤓ TO GROUND` 
+                        : `⚠️ STAIR ${shaftTag} (NO LOWER SHAFT)`}
+                  </text>
+                </g>
+              </g>
+            );
+          })}
+
+          {/* Point Elements (Doors & Exits) */}
+          {elements.filter(e => ["DOOR", "EXIT"].includes(e.type)).map(el => {
             const eAny = el as any;
             const isExit = el.type === "EXIT";
             const isDoor = el.type === "DOOR";
-            const fill = isExit ? "#10b981" : (isDoor ? "#f59e0b" : "#64748b");
+            const fill = isExit ? "#10b981" : "#f59e0b";
             const size = 0.8;
             const intel = isExit ? exitStatsMap.get(el.id) : null;
             
@@ -830,6 +943,74 @@ export function EditorCanvas() {
               Done (V)
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Floating Staircase Shaft Placement HUD Banner */}
+      {activeTool === "STAIR" && (
+        <div 
+          data-no-canvas-click="true"
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md border border-purple-500/40 text-white px-4 py-2.5 rounded-xl shadow-2xl z-20 flex items-center space-x-4 animate-in fade-in slide-in-from-top-3 select-none"
+        >
+          <div className="flex items-center space-x-2.5 border-r border-slate-700 pr-4">
+            <span className="p-2 bg-gradient-to-tr from-purple-500 to-indigo-600 text-white rounded-lg shadow-sm">
+              <ListStart size={18} />
+            </span>
+            <div>
+              <div className="text-xs font-bold text-purple-300 uppercase tracking-wider flex items-center gap-2">
+                Staircase Shaft Placement Active
+                <span className="text-[10px] bg-purple-600/80 px-2 py-0.5 rounded-full font-mono text-white font-bold">
+                  {elements.filter(e => e.type === "STAIR").length} on floor
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-300">
+                {activeFloorNumber > 0 
+                  ? "Click near ghost stair below to auto-align. Upper floor occupants use stairs to reach Ground exits."
+                  : "Place stairs on Ground Floor. Upper floor stairs placed directly above will connect vertically."}
+              </div>
+            </div>
+          </div>
+
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTool("SELECT");
+            }}
+            className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold rounded-lg transition-colors border border-slate-600 cursor-pointer shadow-xs active:scale-95"
+          >
+            Done (V)
+          </button>
+        </div>
+      )}
+
+      {/* Warning Notice: Upper Floor Lacks Staircase */}
+      {activeFloorNumber > 0 && elements.filter(e => e.type === "STAIR").length === 0 && elements.length > 0 && activeTool !== "STAIR" && (
+        <div 
+          data-no-canvas-click="true"
+          className="absolute top-4 left-4 bg-amber-950/90 backdrop-blur-md border border-amber-500/60 text-amber-200 px-3.5 py-2.5 rounded-xl shadow-lg z-20 flex items-center space-x-3 text-xs animate-in fade-in slide-in-from-top-2"
+        >
+          <span className="text-lg">⚠️</span>
+          <div>
+            <div className="font-bold text-amber-300">Level {activeFloorNumber} Has No Staircase</div>
+            <div className="text-[11px] text-amber-200/80">
+              Occupants on this floor cannot evacuate down to Ground Floor exits without stairs.
+            </div>
+          </div>
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTool("STAIR");
+            }}
+            className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer shadow-xs active:scale-95"
+          >
+            + Add Stair (S)
+          </button>
         </div>
       )}
 

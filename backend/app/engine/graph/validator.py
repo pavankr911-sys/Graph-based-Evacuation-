@@ -229,6 +229,17 @@ class GraphValidator:
                 if node.id not in self.adj_list or len(self.adj_list[node.id]) == 0:
                     self._add_warning("SPECIAL_NODE", f"Special node type '{node.node_type}' is isolated.", node.id)
 
+        # Check multi-floor vertical egress requirements
+        floor_numbers = sorted(list({n.floor_number for n in self.nodes}))
+        for f_num in floor_numbers:
+            if f_num > 0:
+                has_stair = any(n.floor_number == f_num and n.node_type == "STAIR" for n in self.nodes)
+                if not has_stair:
+                    self._add_warning(
+                        "STAIR_REQUIREMENT",
+                        f"Floor {f_num} has walkable spaces but no staircase. Evacuees on upper floors require stairs to reach Ground Floor exits."
+                    )
+
     def _analyze_connectivity(self) -> Tuple[int, List[int], int, Dict[uuid.UUID, int]]:
         visited = set()
         components_count = 0

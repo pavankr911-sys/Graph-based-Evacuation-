@@ -43,13 +43,15 @@ class GraphGenerator:
             f.id: [] for f in building.sorted_floors
         }
 
-    def _get_node_type(self, cell_type: CellType) -> str:
+    def _get_node_type(self, cell_type: CellType, floor_number: int = 0) -> str:
         if cell_type == CellType.DOOR:
             return "DOOR"
         elif cell_type == CellType.STAIR:
             return "STAIR"
         elif cell_type == CellType.EXIT:
-            return "EXIT"
+            # Physical architecture principle: Exterior discharge exits exist strictly on Ground Floor (floor 0).
+            # Any exit placed on upper floors is treated as internal corridor space directing evacuees to stairs.
+            return "EXIT" if floor_number == 0 else "WALKABLE"
         else:
             return "WALKABLE" # Standard topological fallback
 
@@ -95,7 +97,7 @@ class GraphGenerator:
                             x=physical_x,
                             y=physical_y,
                             z=p_floor.elevation_z,
-                            node_type=self._get_node_type(cell_type),
+                            node_type=self._get_node_type(cell_type, p_floor.floor_number),
                             capacity_persons=node_capacity,
                             base_cost=1.0 # 1.0 multiplier for flat horizontal movement
                         )

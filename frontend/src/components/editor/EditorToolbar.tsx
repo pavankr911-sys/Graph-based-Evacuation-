@@ -9,8 +9,8 @@ const TOOLS: { id: ToolType; icon: LucideIcon; label: string; shortcut: string }
   { id: "ROOM", icon: Square, label: "Room", shortcut: "R" },
   { id: "WALL", icon: Grid3x3, label: "Wall", shortcut: "W" },
   { id: "DOOR", icon: DoorOpen, label: "Door", shortcut: "D" },
-  { id: "STAIR", icon: ListStart, label: "Stair", shortcut: "S" },
-  { id: "EXIT", icon: ArrowRightSquare, label: "Exit", shortcut: "E" },
+  { id: "STAIR", icon: ListStart, label: "Staircase Shaft", shortcut: "S" },
+  { id: "EXIT", icon: ArrowRightSquare, label: "Ground Exterior Exit", shortcut: "E" },
   { id: "HAZARD", icon: Flame, label: "Fire / Hazard Brush", shortcut: "H" },
 ];
 
@@ -19,8 +19,11 @@ export function EditorToolbar() {
     activeTool, setActiveTool, 
     undo, redo, history, historyIndex,
     selectedElementId, deleteElement,
-    getCurrentElements, activeFloorId, clearHazards
+    getCurrentElements, activeFloorId, clearHazards, floors
   } = useEditorStore();
+
+  const activeFloor = floors.find(f => f.id === activeFloorId);
+  const activeFloorNumber = activeFloor ? activeFloor.floor_number : 0;
 
   const canUndo = historyIndex > 0;
   const canRedo = historyIndex < history.length - 1;
@@ -36,13 +39,34 @@ export function EditorToolbar() {
           const Icon = tool.icon;
           const isActive = activeTool === tool.id;
           const isFireTool = tool.id === "HAZARD";
+          const isStairTool = tool.id === "STAIR";
+          const isExitTool = tool.id === "EXIT";
           const hasFires = isFireTool && totalHazards.length > 0;
+          const isUpperFloorExit = isExitTool && activeFloorNumber > 0;
 
           return (
             <button
               key={tool.id}
-              title={`${tool.label} (${tool.shortcut}) - ${isFireTool ? "Click anywhere on floor to place/toggle fire sources" : ""}`}
-              onClick={() => setActiveTool(tool.id)}
+              title={`${tool.label} (${tool.shortcut}) ${
+                isUpperFloorExit 
+                  ? "- (Notice: Exits belong strictly on Ground Floor. Upper floors must use Stairs to connect down)" 
+                  : isStairTool 
+                  ? "- Continuous vertical egress shaft connecting floors" 
+                  : isFireTool 
+                  ? "- Click anywhere on floor to place/toggle fire sources" 
+                  : ""
+              }`}
+              onClick={() => {
+                if (isUpperFloorExit) {
+                  alert(
+                    `🚪 Exterior Building Discharge Notice:\n\n` +
+                    `Exterior exit doors lead outside and can only discharge on the Ground Floor (Level 0).\n\n` +
+                    `On Floor ${activeFloorNumber}, please use the Staircase tool (S) to connect occupants down to the Ground Floor exits.`
+                  );
+                  return;
+                }
+                setActiveTool(tool.id);
+              }}
               className={`relative p-3 rounded-xl flex items-center justify-center transition-all ${
                 isFireTool && isActive
                   ? "bg-gradient-to-tr from-amber-500 via-orange-500 to-red-600 text-white shadow-md shadow-orange-500/40 ring-2 ring-orange-300 ring-offset-1"
@@ -50,6 +74,12 @@ export function EditorToolbar() {
                   ? hasFires
                     ? "bg-orange-50 text-orange-600 hover:bg-orange-100 border border-orange-200"
                     : "text-orange-500 hover:bg-orange-50 hover:text-orange-600"
+                  : isStairTool && isActive
+                  ? "bg-purple-100 text-purple-700 shadow-inner ring-2 ring-purple-300"
+                  : isStairTool && !isActive
+                  ? "text-purple-600 hover:bg-purple-50"
+                  : isUpperFloorExit
+                  ? "text-slate-300 hover:text-slate-400 hover:bg-slate-100"
                   : isActive 
                   ? "bg-blue-100 text-blue-700 shadow-inner" 
                   : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"

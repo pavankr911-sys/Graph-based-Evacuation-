@@ -23,8 +23,16 @@ class Navigator:
         for n in self.idx_to_node:
             self.nodes[str(n.id)] = n
         
-        # Find all EXIT node indices
-        self.exit_indices: List[int] = [i for i, n in enumerate(self.idx_to_node) if n.node_type == "EXIT"]
+        # Find Ground Floor EXIT node indices (Discharge Level per NFPA 101 & IBC 1022)
+        # Upper floors (Level 1, 2, ...) have no exterior exits; occupants must descend via stairs to Ground Floor
+        ground_floor_number = min((n.floor_number for n in self.idx_to_node), default=0)
+        self.exit_indices: List[int] = [
+            i for i, n in enumerate(self.idx_to_node) 
+            if n.node_type == "EXIT" and n.floor_number == ground_floor_number
+        ]
+        # Fallback to any exit node if no exits exist on ground floor
+        if not self.exit_indices:
+            self.exit_indices = [i for i, n in enumerate(self.idx_to_node) if n.node_type == "EXIT"]
         
         # Build integer-indexed reverse adjacency list for multi-source Dijkstra from EXITs
         # adj[u] -> list of (v, length, capacity)

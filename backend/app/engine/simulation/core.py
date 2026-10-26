@@ -30,6 +30,7 @@ class EvacuationSimulation:
         self.exit_times: Dict[str, float] = {}
         self.casualties: set = set()
         self.tick_count = 0
+        self.agent_stair_progress: Dict[str, float] = {}
         
         # Initialize Hazard Engine
         ignition_ids = [UUID(uid) for uid in self.config.hazard_ignition_nodes] if getattr(self.config, 'hazard_ignition_nodes', []) else []
@@ -235,39 +236,67 @@ class EvacuationSimulation:
 
         target_node = self.nodes.get(UUID(agent.target_node_id))
         
-        # Calculate 3D vector to target (including vertical stair distance across floors)
+        is_vertical_stair = (target_node.floor_number != agent.floor_number)
         dx = target_node.x - agent.x
         dy = target_node.y - agent.y
         dz = abs(target_node.floor_number - agent.floor_number) * 3.5
-        dist = math.hypot(dx, dy, dz)
+        total_dist = math.hypot(dx, dy, dz)
         
-        speed_factor = 0.6 if dz > 0 else 1.0  # Stair speed penalty per NFPA standard
+        speed_factor = 0.6 if is_vertical_stair else 1.0  # Stair speed penalty per NFPA standard
         move_dist = agent.base_speed * speed_factor * dt
         
-        if move_dist >= dist:
-            # Reached target node
-            agent.x = target_node.x
-            agent.y = target_node.y
-            agent.floor_number = target_node.floor_number
-            agent.current_node_id = agent.target_node_id
-            agent.target_node_id = None
-            
-            # Check if this new node is an exit
-            if target_node.node_type == "EXIT":
-                if agent.id not in self.exit_times:
-                    self.exit_times[agent.id] = round(self.current_time_sec, 2)
-                agent.status = "EXITED"
-                agent.floor_number = 0  # Reached outdoor ground level
-                agent.exit_node_id = str(target_node.id)
-                agent.target_exit_id = str(target_node.id)
-                agent.velocity = 0.0
-                self._get_agent_assembly_spot(agent.id)
+        if is_vertical_stair:
+            # Progress through continuous vertical stair shaft
+            prog = self.agent_stair_progress.get(agent.id, 0.0) + move_dist
+            if prog >= total_dist:
+                self.agent_stair_progress[agent.id] = 0.0
+                agent.x = target_node.x
+                agent.y = target_node.y
+                agent.floor_number = target_node.floor_number
+                agent.current_node_id = agent.target_node_id
+                agent.target_node_id = None
+                
+                if target_node.node_type == "EXIT":
+                    if agent.id not in self.exit_times:
+                        self.exit_times[agent.id] = round(self.current_time_sec, 2)
+                    agent.status = "EXITED"
+                    agent.floor_number = 0
+                    agent.exit_node_id = str(target_node.id)
+                    agent.target_exit_id = str(target_node.id)
+                    agent.velocity = 0.0
+                    self._get_agent_assembly_spot(agent.id)
+            else:
+                self.agent_stair_progress[agent.id] = prog
+                if total_dist > 0:
+                    agent.x += dx * (move_dist / total_dist)
+                    agent.y += dy * (move_dist / total_dist)
+                agent.velocity = agent.base_speed * 0.6
         else:
-            # Move towards target
-            if dist > 0:
-                agent.x += (dx / dist) * move_dist
-                agent.y += (dy / dist) * move_dist
-            agent.velocity = agent.base_speed
+            dist_2d = math.hypot(dx, dy)
+            if move_dist >= dist_2d:
+                # Reached target node on same floor
+                agent.x = target_node.x
+                agent.y = target_node.y
+                agent.floor_number = target_node.floor_number
+                agent.current_node_id = agent.target_node_id
+                agent.target_node_id = None
+                
+                # Check if this new node is an exit
+                if target_node.node_type == "EXIT":
+                    if agent.id not in self.exit_times:
+                        self.exit_times[agent.id] = round(self.current_time_sec, 2)
+                    agent.status = "EXITED"
+                    agent.floor_number = 0  # Reached outdoor ground level
+                    agent.exit_node_id = str(target_node.id)
+                    agent.target_exit_id = str(target_node.id)
+                    agent.velocity = 0.0
+                    self._get_agent_assembly_spot(agent.id)
+            else:
+                # Move towards target
+                if dist_2d > 0:
+                    agent.x += (dx / dist_2d) * move_dist
+                    agent.y += (dy / dist_2d) * move_dist
+                agent.velocity = agent.base_speed
 
     def tick(self):
         """Advances the simulation by 1 tick and records the frame."""
