@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useMemo, useRef } from "react";
+import React, { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import { useEditorStore } from "@/store/editorStore";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Html } from "@react-three/drei";
 import { Room, Wall, Exit, Floor } from "@/lib/editor/types";
+import { ZoomIn, ZoomOut, Maximize2, Layers, Compass } from "lucide-react";
 import * as THREE from "three";
 
 const FLOOR_HEIGHT = 3;
@@ -375,7 +376,255 @@ function AgentMesh({
   );
 }
 
+// --- ADVANCED 3D CAMERA CONTROLLER (CURSOR-CENTRIC ZOOM + SMOOTH PRESETS) ---
+function AdvancedCameraController({
+  cx,
+  cy,
+  buildingBounds,
+  activeFloorNumber,
+  bridgeRef,
+}: {
+  cx: number;
+  cy: number;
+  buildingBounds: { minX: number; maxX: number; minY: number; maxY: number };
+  activeFloorNumber: number;
+  bridgeRef: React.MutableRefObject<any>;
+}) {
+  const { camera, gl, raycaster } = useThree();
+  const controlsRef = useRef<any>(null);
+
+  // Transition state for smooth camera gliding
+  const transitionRef = useRef({
+    active: false,
+    desiredCamPos: new THREE.Vector3(),
+    desiredTarget: new THREE.Vector3(),
+  });
+
+  const activeElevation = activeFloorNumber * FLOOR_HEIGHT;
+
+  const smoothTransition = useCallback(
+    (camPos: [number, number, number], target: [number, number, number]) => {
+      transitionRef.current.desiredCamPos.set(...camPos);
+      transitionRef.current.desiredTarget.set(...target);
+      transitionRef.current.active = true;
+    },
+    []
+  );
+
+  const getBuildingSpan = useCallback(() => {
+    const spanX =
+      buildingBounds.maxX !== -Infinity && buildingBounds.minX !== Infinity
+        ? Math.max(16, buildingBounds.maxX - buildingBounds.minX)
+        : 30;
+    const spanY =
+      buildingBounds.maxY !== -Infinity && buildingBounds.minY !== Infinity
+        ? Math.max(16, buildingBounds.maxY - buildingBounds.minY)
+        : 20;
+    return Math.max(spanX, spanY);
+  }, [buildingBounds]);
+
+  const fitBuilding = useCallback(() => {
+    const span = getBuildingSpan();
+    const dist = span * 1.25 + 12;
+    smoothTransition(
+      [cx + dist * 0.65, activeElevation + dist * 0.85, cy + dist * 0.75],
+      [cx, activeElevation, cy]
+    );
+  }, [cx, cy, activeElevation, getBuildingSpan, smoothTransition]);
+
+  const focusFloor = useCallback(() => {
+    const span = getBuildingSpan();
+    const dist = span * 0.8 + 8;
+    smoothTransition(
+      [cx, activeElevation + dist * 0.9, cy + dist * 0.85],
+      [cx, activeElevation, cy]
+    );
+  }, [cx, cy, activeElevation, getBuildingSpan, smoothTransition]);
+
+  const setPreset = useCallback(
+    (preset: "iso" | "top" | "front" | "side") => {
+      const span = getBuildingSpan();
+      const dist = span * 1.1 + 10;
+      switch (preset) {
+        case "top":
+          smoothTransition(
+            [cx, activeElevation + dist * 1.4, cy + 0.001],
+            [cx, activeElevation, cy]
+          );
+          break;
+        case "front":
+          smoothTransition(
+            [cx, activeElevation + 5, cy + dist * 1.2],
+            [cx, activeElevation, cy]
+          );
+          break;
+        case "side":
+          smoothTransition(
+            [cx + dist * 1.2, activeElevation + 5, cy],
+            [cx, activeElevation, cy]
+          );
+          break;
+        case "iso":
+        default:
+          fitBuilding();
+          break;
+      }
+    },
+    [cx, cy, activeElevation, getBuildingSpan, smoothTransition, fitBuilding]
+  );
+
+  const zoomIn = useCallback(() => {
+    if (!controlsRef.current) return;
+    const target = controlsRef.current.target as THREE.Vector3;
+    const dir = new THREE.Vector3().subVectors(target, camera.position);
+    const dist = dir.length();
+    if (dist > 3.0) {
+      const step = Math.max(2.5, dist * 0.25);
+      smoothTransition(
+        [
+          camera.position.x + dir.x * (step / dist),
+          camera.position.y + dir.y * (step / dist),
+          camera.position.z + dir.z * (step / dist),
+        ],
+        [target.x, target.y, target.z]
+      );
+    }
+  }, [camera, smoothTransition]);
+
+  const zoomOut = useCallback(() => {
+    if (!controlsRef.current) return;
+    const target = controlsRef.current.target as THREE.Vector3;
+    const dir = new THREE.Vector3().subVectors(target, camera.position);
+    const dist = dir.length();
+    if (dist < 220.0) {
+      const step = Math.max(3.0, dist * 0.28);
+      smoothTransition(
+        [
+          camera.position.x - dir.x * (step / dist),
+          camera.position.y - dir.y * (step / dist),
+          camera.position.z - dir.z * (step / dist),
+        ],
+        [target.x, target.y, target.z]
+      );
+    }
+  }, [camera, smoothTransition]);
+
+  // Expose methods to bridge ref for UI buttons
+  useEffect(() => {
+    bridgeRef.current = {
+      zoomIn,
+      zoomOut,
+      fitBuilding,
+      focusFloor,
+      setPreset,
+    };
+  }, [bridgeRef, zoomIn, zoomOut, fitBuilding, focusFloor, setPreset]);
+
+  // Smooth frame interpolation loop (60 FPS easing)
+  useFrame((_, delta) => {
+    if (transitionRef.current.active && controlsRef.current) {
+      const t = Math.min(1.0, delta * 7.5);
+      camera.position.lerp(transitionRef.current.desiredCamPos, t);
+      controlsRef.current.target.lerp(transitionRef.current.desiredTarget, t);
+      controlsRef.current.update();
+
+      if (
+        camera.position.distanceTo(transitionRef.current.desiredCamPos) < 0.08 &&
+        controlsRef.current.target.distanceTo(transitionRef.current.desiredTarget) < 0.08
+      ) {
+        camera.position.copy(transitionRef.current.desiredCamPos);
+        controlsRef.current.target.copy(transitionRef.current.desiredTarget);
+        controlsRef.current.update();
+        transitionRef.current.active = false;
+      }
+    }
+  });
+
+  // Cursor-Centric Zoom (Zoom wherever pointer points) + Double Click Focus
+  useEffect(() => {
+    const domElement = gl.domElement;
+
+    const handleWheel = (e: WheelEvent) => {
+      if (!controlsRef.current || transitionRef.current.active) return;
+
+      const rect = domElement.getBoundingClientRect();
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+      const floorPlane = new THREE.Plane(
+        new THREE.Vector3(0, 1, 0),
+        -activeElevation
+      );
+      const hitPoint = new THREE.Vector3();
+      const hasIntersection = raycaster.ray.intersectPlane(floorPlane, hitPoint);
+
+      if (hasIntersection) {
+        const isZoomIn = e.deltaY < 0;
+        const curDist = camera.position.distanceTo(controlsRef.current.target);
+
+        if (isZoomIn && curDist > 2.5) {
+          // Pull controls target slightly toward pointer hit point (adaptive cursor center)
+          controlsRef.current.target.lerp(hitPoint, 0.10);
+          const camToHit = new THREE.Vector3().subVectors(hitPoint, camera.position);
+          const moveStep = Math.min(camToHit.length() * 0.12, 4.0);
+          camera.position.addScaledVector(camToHit.normalize(), moveStep);
+          controlsRef.current.update();
+        } else if (!isZoomIn && curDist < 220) {
+          const camToHit = new THREE.Vector3().subVectors(hitPoint, camera.position);
+          const moveStep = Math.min(camToHit.length() * 0.12, 4.5);
+          camera.position.addScaledVector(camToHit.normalize(), -moveStep);
+          controlsRef.current.update();
+        }
+      }
+    };
+
+    const handleDblClick = (e: MouseEvent) => {
+      const rect = domElement.getBoundingClientRect();
+      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+      const floorPlane = new THREE.Plane(
+        new THREE.Vector3(0, 1, 0),
+        -activeElevation
+      );
+      const hitPoint = new THREE.Vector3();
+      if (raycaster.ray.intersectPlane(floorPlane, hitPoint)) {
+        // Smoothly glide into clicked spot
+        smoothTransition(
+          [hitPoint.x + 8, activeElevation + 12, hitPoint.z + 10],
+          [hitPoint.x, activeElevation, hitPoint.z]
+        );
+      }
+    };
+
+    domElement.addEventListener("wheel", handleWheel, { passive: true });
+    domElement.addEventListener("dblclick", handleDblClick);
+    return () => {
+      domElement.removeEventListener("wheel", handleWheel);
+      domElement.removeEventListener("dblclick", handleDblClick);
+    };
+  }, [gl, camera, raycaster, activeElevation, smoothTransition]);
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      makeDefault
+      target={[cx, activeElevation, cy]}
+      minDistance={2.5}
+      maxDistance={250}
+      maxPolarAngle={Math.PI / 2 - 0.02}
+      dampingFactor={0.08}
+      enableDamping
+    />
+  );
+}
+
 export function EditorCanvas3D() {
+  const cameraBridgeRef = useRef<any>(null);
+  const [activePreset, setActivePreset] = useState<"iso" | "top" | "front" | "side">("iso");
+
   const {
     activeFloorId,
     floors,
@@ -661,8 +910,91 @@ export function EditorCanvas3D() {
           );
         })}
 
-        <OrbitControls makeDefault target={[cx, activeFloorNumber * FLOOR_HEIGHT, cy]} />
+        <AdvancedCameraController
+          cx={cx}
+          cy={cy}
+          buildingBounds={buildingBounds}
+          activeFloorNumber={activeFloorNumber}
+          bridgeRef={cameraBridgeRef}
+        />
       </Canvas>
+
+      {/* Floating 3D Navigation, Camera Presets & Zoom Controls Widget */}
+      <div 
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        className="absolute top-4 right-4 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 text-white rounded-xl shadow-2xl p-2.5 z-20 flex flex-col space-y-2.5 select-none"
+      >
+        <div className="flex items-center justify-between border-b border-slate-700/80 pb-2 px-1">
+          <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-200">
+            <Compass size={14} className="text-indigo-400" />
+            <span>3D View & Zoom</span>
+          </div>
+          <span className="text-[10px] text-slate-400 font-mono">L{activeFloorNumber}</span>
+        </div>
+
+        {/* Step Zoom & Fit Buttons */}
+        <div className="grid grid-cols-4 gap-1">
+          <button
+            onClick={() => cameraBridgeRef.current?.zoomIn()}
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 rounded-lg flex items-center justify-center transition-all cursor-pointer border border-slate-700/60"
+            title="Zoom In (+)"
+          >
+            <ZoomIn size={15} />
+          </button>
+          <button
+            onClick={() => cameraBridgeRef.current?.zoomOut()}
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 rounded-lg flex items-center justify-center transition-all cursor-pointer border border-slate-700/60"
+            title="Zoom Out (-)"
+          >
+            <ZoomOut size={15} />
+          </button>
+          <button
+            onClick={() => cameraBridgeRef.current?.fitBuilding()}
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 rounded-lg flex items-center justify-center transition-all cursor-pointer border border-slate-700/60"
+            title="Fit Building to Screen (Home)"
+          >
+            <Maximize2 size={15} />
+          </button>
+          <button
+            onClick={() => cameraBridgeRef.current?.focusFloor()}
+            className="p-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-indigo-400 hover:text-indigo-300 rounded-lg flex items-center justify-center transition-all cursor-pointer border border-slate-700/60"
+            title={`Focus on Level ${activeFloorNumber}`}
+          >
+            <Layers size={15} />
+          </button>
+        </div>
+
+        {/* Camera Angle Presets */}
+        <div className="grid grid-cols-2 gap-1 pt-0.5 border-t border-slate-800 text-[11px] font-semibold">
+          {[
+            { id: "iso", label: "3D Iso" },
+            { id: "top", label: "Top (Plan)" },
+            { id: "front", label: "Front" },
+            { id: "side", label: "Side" },
+          ].map((preset) => (
+            <button
+              key={preset.id}
+              onClick={() => {
+                setActivePreset(preset.id as any);
+                cameraBridgeRef.current?.setPreset(preset.id);
+              }}
+              className={`px-2 py-1 rounded-lg text-center transition-all cursor-pointer ${
+                activePreset === preset.id
+                  ? "bg-indigo-600 text-white shadow-xs font-bold"
+                  : "bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-white"
+              }`}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Pointer Tip */}
+        <div className="text-[10px] text-slate-400 text-center border-t border-slate-800/80 pt-1.5 leading-tight">
+          Scroll = Zoom to cursor<br />Double-click = Focus room
+        </div>
+      </div>
 
       {/* HUD Info */}
       <div className="absolute bottom-4 left-4 bg-slate-800/90 backdrop-blur-sm px-3.5 py-2 rounded-md shadow-lg border border-slate-700 text-xs text-slate-300 font-mono flex items-center space-x-3 z-10">
