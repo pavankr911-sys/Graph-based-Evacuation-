@@ -214,6 +214,12 @@ export function EditorCanvas() {
   }, [undo, redo, setActiveTool, graph, setSelectedGraphNodeId, setSelectedGraphEdgeId, selectedGraphNodeId, selectedGraphEdgeId]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    // Prevent element placement or canvas actions when clicking on UI buttons or overlays
+    const targetEl = e.target as HTMLElement | null;
+    if (targetEl && (targetEl.closest("button") || targetEl.closest("[data-no-canvas-click]") || targetEl.tagName === "BUTTON")) {
+      return;
+    }
+
     if (e.button === 1 || (e.button === 0 && e.altKey)) { // Middle click or Alt+Left for pan
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
@@ -744,7 +750,14 @@ export function EditorCanvas() {
       
       {/* Floating Interactive Fire Ignition Brush HUD Banner */}
       {activeTool === "HAZARD" && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md border border-orange-500/40 text-white px-4 py-2.5 rounded-xl shadow-2xl z-20 flex items-center space-x-4 animate-in fade-in slide-in-from-top-3">
+        <div 
+          data-no-canvas-click="true"
+          onPointerDown={(e) => e.stopPropagation()}
+          onPointerUp={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+          className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md border border-orange-500/40 text-white px-4 py-2.5 rounded-xl shadow-2xl z-20 flex items-center space-x-4 animate-in fade-in slide-in-from-top-3 select-none"
+        >
           <div className="flex items-center space-x-2.5 border-r border-slate-700 pr-4">
             <span className="p-2 bg-gradient-to-tr from-amber-500 to-red-600 text-white rounded-lg shadow-sm">
               <Flame size={18} className="animate-pulse" />
@@ -773,8 +786,12 @@ export function EditorCanvas() {
             ].map((preset) => (
               <button
                 key={preset.label}
-                onClick={() => setHazardSpreadRate(preset.val)}
-                className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all ${
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setHazardSpreadRate(preset.val);
+                }}
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all cursor-pointer ${
                   (hazardSpreadRate || 0.15) === preset.val
                     ? "bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-xs"
                     : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
@@ -790,8 +807,12 @@ export function EditorCanvas() {
           <div className="flex items-center space-x-2">
             {elements.filter(e => e.type === "HAZARD").length > 0 && (
               <button
-                onClick={clearHazards}
-                className="px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white text-xs font-semibold rounded-lg transition-colors flex items-center space-x-1"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  clearHazards();
+                }}
+                className="px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white text-xs font-semibold rounded-lg transition-colors flex items-center space-x-1 cursor-pointer shadow-xs active:scale-95"
                 title="Extinguish all fire sources on building"
               >
                 <Trash2 size={13} />
@@ -799,8 +820,12 @@ export function EditorCanvas() {
               </button>
             )}
             <button
-              onClick={() => setActiveTool("SELECT")}
-              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold rounded-lg transition-colors border border-slate-600"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveTool("SELECT");
+              }}
+              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold rounded-lg transition-colors border border-slate-600 cursor-pointer shadow-xs active:scale-95"
             >
               Done (V)
             </button>
@@ -809,7 +834,7 @@ export function EditorCanvas() {
       )}
 
       {/* HUD Info */}
-      <div className="absolute bottom-4 left-4 bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-md shadow-sm border border-slate-200 text-xs text-slate-600 font-mono">
+      <div data-no-canvas-click="true" onPointerDown={(e) => e.stopPropagation()} className="absolute bottom-4 left-4 bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-md shadow-sm border border-slate-200 text-xs text-slate-600 font-mono select-none">
         X: {mousePos.x.toFixed(1)}m | Y: {mousePos.y.toFixed(1)}m | Zoom: {zoom.toFixed(1)}
       </div>
     </div>
