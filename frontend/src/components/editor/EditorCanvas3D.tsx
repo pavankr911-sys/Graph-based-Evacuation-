@@ -385,6 +385,8 @@ export function EditorCanvas3D() {
     showExitIntelligence,
     is3DStackedView,
     setIs3DStackedView,
+    activeTool,
+    setActiveTool,
   } = useEditorStore();
 
   const allElements = getCurrentElements();
@@ -433,7 +435,25 @@ export function EditorCanvas3D() {
 
   const { cx, cy } = buildingBounds;
 
-  const placedHazards = useMemo(() => elements.filter((e) => e.type === "HAZARD"), [elements]);
+  const placedHazards = useMemo(() => {
+
+    const hazards = is3DStackedView
+
+      ? allElements.filter((e) => e.type === "HAZARD")
+
+      : elements.filter((e) => e.type === "HAZARD");
+
+    return hazards.map((h: any) => {
+
+      const fl = floors.find((f) => f.id === h.floor_id);
+
+      const floorNum = fl !== undefined ? fl.floor_number : activeFloorNumber;
+
+      return { ...h, floor_number: floorNum };
+
+    });
+
+  }, [allElements, elements, is3DStackedView, floors, activeFloorNumber]);
   const simHazards = currentFrame?.hazards || [];
   const hasFlames = placedHazards.length > 0 || simHazards.length > 0;
 
@@ -506,24 +526,29 @@ export function EditorCanvas3D() {
           centerY={cy}
           hasFlames={hasFlames}
         >
-          {/* User-Placed Fire Hazards */}
-          {placedHazards.map((el) => (
-            <FastFlame
-              key={el.id}
-              x={el.position_x}
-              y={activeFloorNumber * FLOOR_HEIGHT}
-              z={el.position_y}
-              intensity={el.intensity || 1.0}
-              heightScale={1.5}
-            />
+          {/* User-Placed Fire Hazards (Pre-simulation) */}
+          {placedHazards.map((el: any) => (
+            <group key={el.id} position={[el.position_x, el.floor_number * FLOOR_HEIGHT, el.position_y]}>
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+                <circleGeometry args={[0.9, 24]} />
+                <meshBasicMaterial color="#ef4444" transparent opacity={0.4} />
+              </mesh>
+              <FastFlame
+                x={0}
+                y={0}
+                z={0}
+                intensity={el.intensity || 1.0}
+                heightScale={1.5}
+              />
+            </group>
           ))}
 
-          {/* Dynamic Simulation Live Fire Spread */}
+          {/* Dynamic Simulation Live Fire Spread (Multi-story accurate elevation) */}
           {simHazards.map((h: any) => (
             <FastFlame
               key={`sim-hazard-${h.node_id}`}
               x={h.x}
-              y={activeFloorNumber * FLOOR_HEIGHT}
+              y={(h.floor_number !== undefined ? h.floor_number : activeFloorNumber) * FLOOR_HEIGHT}
               z={h.y}
               intensity={Math.max(0.2, h.intensity || 0.5)}
               heightScale={1.2}
@@ -655,6 +680,11 @@ export function EditorCanvas3D() {
         <span className="text-slate-400">|</span>
         <span>{floors.length} Floors Total</span>
         <span className="text-slate-400">|</span>
+        {placedHazards.length > 0 && !simulationRun && (
+          <span className="text-orange-400 font-semibold flex items-center">
+            🔥 {placedHazards.length} Placed Ignition Sources
+          </span>
+        )}
         {simHazards.length > 0 && (
           <span className="text-amber-400 font-semibold flex items-center">
             🔥 {simHazards.length} Active Fire Zones

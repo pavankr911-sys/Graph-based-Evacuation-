@@ -4,6 +4,7 @@ import { useEditorStore } from "@/store/editorStore";
 import { Point, EditorElement, Room, Wall, Door, Stair, Exit } from "@/lib/editor/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
+import { Flame, Trash2 } from "lucide-react";
 
 export function EditorCanvas() {
   const { 
@@ -11,7 +12,8 @@ export function EditorCanvas() {
     getCurrentElements, addElement, updateElement, setSelectedElementId, selectedElementId,
     undo, redo, setActiveTool, graph, setSelectedGraphNodeId, setSelectedGraphEdgeId, selectedGraphNodeId, selectedGraphEdgeId,
     simulationRun, playbackFrameIndex, showGraphOverlay, blueprintImage, blueprintOpacity,
-    showExitIntelligence, floors, getActiveBlueprint, getActiveBlueprintOpacity
+    showExitIntelligence, floors, getActiveBlueprint, getActiveBlueprintOpacity,
+    deleteElement, clearHazards, hazardSpreadRate, setHazardSpreadRate
   } = useEditorStore();
 
   const elements = getCurrentElements().filter(el => el.floor_id === activeFloorId);
@@ -243,9 +245,15 @@ export function EditorCanvas() {
       } else if (activeTool === "EXIT") {
         addElement({ ...baseObj, type: "EXIT", position_x: snapped.x, position_y: snapped.y, width_meters: 2.0, discharge_rate: 1.5, is_usable: true } as Exit);
       } else if (activeTool === "HAZARD") {
-        addElement({ ...baseObj, type: "HAZARD", position_x: snapped.x, position_y: snapped.y, intensity: 1.0 } as any);
-      } else if (activeTool === "HAZARD") {
-        addElement({ ...baseObj, type: "HAZARD", position_x: snapped.x, position_y: snapped.y, intensity: 1.0 } as any);
+        // Toggle behavior: if clicking near an existing hazard on this floor, extinguish/remove it
+        const existingHazard = elements.find(
+          (el) => el.type === "HAZARD" && Math.hypot((el as any).position_x - snapped.x, (el as any).position_y - snapped.y) <= 0.8
+        );
+        if (existingHazard) {
+          deleteElement(existingHazard.id);
+        } else {
+          addElement({ ...baseObj, type: "HAZARD", position_x: snapped.x, position_y: snapped.y, intensity: 1.0 } as any);
+        }
       }
     }
   };
@@ -333,6 +341,18 @@ export function EditorCanvas() {
               <pattern id="grid" width={gridResolution} height={gridResolution} patternUnits="userSpaceOnUse">
                 <path d={`M ${gridResolution} 0 L 0 0 0 ${gridResolution}`} fill="none" />
               </pattern>
+              {/* Fire gradients and filters for Interactive Fire Ignition Brush */}
+              <radialGradient id="fireCoreGradient" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#fef08a" />
+                <stop offset="35%" stopColor="#fb923c" />
+                <stop offset="75%" stopColor="#ea580c" />
+                <stop offset="100%" stopColor="#b91c1c" />
+              </radialGradient>
+              <radialGradient id="fireAuraGradient" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="rgba(249, 115, 22, 0.55)" />
+                <stop offset="60%" stopColor="rgba(239, 68, 68, 0.25)" />
+                <stop offset="100%" stopColor="rgba(239, 68, 68, 0)" />
+              </radialGradient>
             </defs>
             <rect x="-1000" y="-1000" width="2000" height="2000" fill="url(#grid)" />
             {/* Origin Axes */}
@@ -403,13 +423,85 @@ export function EditorCanvas() {
             );
           })}
 
-          {/* Point Elements (Doors, Stairs, Exits, Hazards) */}
-          {elements.filter(e => ["DOOR", "STAIR", "EXIT", "HAZARD"].includes(e.type)).map(el => {
+          {/* Placed Fire Hazard Ignition Points */}
+          {elements.filter(e => e.type === "HAZARD").map((el, idx) => {
+            const h = el as any;
+            const isSelected = selectedElementId === el.id;
+            return (
+              <g 
+                key={el.id}
+                className="cursor-pointer group"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  if (activeTool === "HAZARD") {
+                    deleteElement(el.id);
+                  } else {
+                    setSelectedElementId(el.id);
+                  }
+                }}
+              >
+                {/* Pulsing Outer Heat Aura */}
+                <circle
+                  cx={h.position_x}
+                  cy={h.position_y}
+                  r={1.3}
+                  fill="url(#fireAuraGradient)"
+                  className="animate-pulse pointer-events-none"
+                />
+                
+                {/* Flame Base Disc */}
+                <circle
+                  cx={h.position_x}
+                  cy={h.position_y}
+                  r={0.65}
+                  fill="url(#fireCoreGradient)"
+                  stroke={isSelected ? "#38bdf8" : "#fed7aa"}
+                  strokeWidth={isSelected ? 0.15 : 0.08}
+                />
+
+                {/* Flame Silhouette Glyph */}
+                <path
+                  d="M0 -0.42 C0.12 -0.2 0.35 -0.1 0.35 0.15 C0.35 0.35 0.2 0.48 0 0.48 C-0.2 0.48 -0.35 0.35 -0.35 0.15 C-0.35 -0.05 -0.18 -0.22 0 -0.42 Z"
+                  transform={`translate(${h.position_x}, ${h.position_y}) scale(0.75)`}
+                  fill="#ffffff"
+                  className="pointer-events-none"
+                />
+
+                {/* Floating Ignition Node Identification Badge */}
+                <g transform={`translate(${h.position_x}, ${h.position_y - 1.15})`} className="pointer-events-none select-none">
+                  <rect
+                    x="-1.8"
+                    y="-0.35"
+                    width="3.6"
+                    height="0.7"
+                    rx="0.35"
+                    fill="#7f1d1d"
+                    stroke="#f87171"
+                    strokeWidth="0.06"
+                    opacity="0.95"
+                  />
+                  <text
+                    x="0"
+                    y="0.1"
+                    textAnchor="middle"
+                    fill="#ffffff"
+                    fontSize="0.3"
+                    fontWeight="900"
+                    fontFamily="monospace"
+                  >
+                    {`🔥 IGNITION #${idx + 1}`}
+                  </text>
+                </g>
+              </g>
+            );
+          })}
+
+          {/* Point Elements (Doors, Stairs, Exits) */}
+          {elements.filter(e => ["DOOR", "STAIR", "EXIT"].includes(e.type)).map(el => {
             const eAny = el as any;
             const isExit = el.type === "EXIT";
             const isDoor = el.type === "DOOR";
-            const isHazard = el.type === "HAZARD";
-            const fill = isHazard ? "#ef4444" : isExit ? "#10b981" : (isDoor ? "#f59e0b" : "#64748b");
+            const fill = isExit ? "#10b981" : (isDoor ? "#f59e0b" : "#64748b");
             const size = 0.8;
             const intel = isExit ? exitStatsMap.get(el.id) : null;
             
@@ -421,7 +513,7 @@ export function EditorCanvas() {
                   width={size}
                   height={size}
                   fill={fill}
-                  rx={isHazard ? 0.4 : 0.1}
+                  rx={0.1}
                   className={`stroke-white stroke-[0.1] ${activeTool === 'SELECT' ? 'cursor-pointer' : 'pointer-events-none'}`}
                   onPointerDown={(e) => handleElementClick(e, el.id)}
                 />
@@ -629,13 +721,93 @@ export function EditorCanvas() {
             />
           )}
           
-          {/* Tool Cursor Preview (for point elements) */}
-          {!isDrawing && activeFloorId && ["DOOR", "STAIR", "EXIT", "HAZARD"].includes(activeTool) && (
+          {/* Interactive Fire Tool Cursor Preview Reticle */}
+          {!isDrawing && activeFloorId && activeTool === "HAZARD" && (
+            <g transform={`translate(${mousePos.x}, ${mousePos.y})`} className="pointer-events-none">
+              <circle r={0.9} fill="rgba(239, 68, 68, 0.15)" stroke="#f97316" strokeWidth={0.08} strokeDasharray="0.3 0.15" />
+              <circle r={0.2} fill="#ef4444" />
+              <line x1="-1.1" y1="0" x2="1.1" y2="0" stroke="#f97316" strokeWidth={0.04} strokeDasharray="0.1 0.1" />
+              <line x1="0" y1="-1.1" x2="0" y2="1.1" stroke="#f97316" strokeWidth={0.04} strokeDasharray="0.1 0.1" />
+              <rect x="-2.2" y="1.05" width="4.4" height="0.6" rx="0.3" fill="#0f172a" opacity="0.92" stroke="#ea580c" strokeWidth="0.04" />
+              <text x="0" y="1.46" textAnchor="middle" fill="#fde047" fontSize="0.28" fontWeight="bold" fontFamily="monospace">
+                🔥 CLICK TO IGNITE / TOGGLE
+              </text>
+            </g>
+          )}
+
+          {/* Standard Tool Cursor Preview (for doors, stairs, exits) */}
+          {!isDrawing && activeFloorId && ["DOOR", "STAIR", "EXIT"].includes(activeTool) && (
             <circle cx={mousePos.x} cy={mousePos.y} r={0.5} className="fill-none stroke-slate-400 stroke-[0.1] stroke-dasharray-[0.2,0.2]" />
           )}
         </g>
       </svg>
       
+      {/* Floating Interactive Fire Ignition Brush HUD Banner */}
+      {activeTool === "HAZARD" && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-900/90 backdrop-blur-md border border-orange-500/40 text-white px-4 py-2.5 rounded-xl shadow-2xl z-20 flex items-center space-x-4 animate-in fade-in slide-in-from-top-3">
+          <div className="flex items-center space-x-2.5 border-r border-slate-700 pr-4">
+            <span className="p-2 bg-gradient-to-tr from-amber-500 to-red-600 text-white rounded-lg shadow-sm">
+              <Flame size={18} className="animate-pulse" />
+            </span>
+            <div>
+              <div className="text-xs font-bold text-orange-300 uppercase tracking-wider flex items-center gap-2">
+                Fire Ignition Brush
+                <span className="text-[10px] bg-red-600/80 px-2 py-0.5 rounded-full font-mono text-white font-bold">
+                  {elements.filter(e => e.type === "HAZARD").length} on floor
+                </span>
+              </div>
+              <div className="text-[11px] text-slate-300">
+                Click floor to place fire. Click fire node to extinguish.
+              </div>
+            </div>
+          </div>
+
+          {/* Spread Rate Selector */}
+          <div className="flex items-center space-x-1.5 border-r border-slate-700 pr-4 text-xs">
+            <span className="text-slate-400 text-[11px] font-medium">Spread Speed:</span>
+            {[
+              { label: "Slow", val: 0.05 },
+              { label: "Normal", val: 0.15 },
+              { label: "Fast", val: 0.30 },
+              { label: "Inferno", val: 0.50 }
+            ].map((preset) => (
+              <button
+                key={preset.label}
+                onClick={() => setHazardSpreadRate(preset.val)}
+                className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all ${
+                  (hazardSpreadRate || 0.15) === preset.val
+                    ? "bg-gradient-to-r from-orange-500 to-red-600 text-white shadow-xs"
+                    : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
+                }`}
+                title={`Set hazard spread rate to ${preset.val}`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Extinguish All & Done buttons */}
+          <div className="flex items-center space-x-2">
+            {elements.filter(e => e.type === "HAZARD").length > 0 && (
+              <button
+                onClick={clearHazards}
+                className="px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white text-xs font-semibold rounded-lg transition-colors flex items-center space-x-1"
+                title="Extinguish all fire sources on building"
+              >
+                <Trash2 size={13} />
+                <span>Extinguish All</span>
+              </button>
+            )}
+            <button
+              onClick={() => setActiveTool("SELECT")}
+              className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold rounded-lg transition-colors border border-slate-600"
+            >
+              Done (V)
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* HUD Info */}
       <div className="absolute bottom-4 left-4 bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-md shadow-sm border border-slate-200 text-xs text-slate-600 font-mono">
         X: {mousePos.x.toFixed(1)}m | Y: {mousePos.y.toFixed(1)}m | Zoom: {zoom.toFixed(1)}

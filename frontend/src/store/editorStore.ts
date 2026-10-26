@@ -82,12 +82,15 @@ interface EditorState {
   isPlayingSimulation: boolean;
   showExitIntelligence: boolean;
   simulationOccupantCount: number;
+  hazardSpreadRate: number;
   
   setSimulationRun: (run: any | null) => void;
   setPlaybackFrameIndex: (idx: number) => void;
   setIsPlayingSimulation: (isPlay: boolean) => void;
   setShowExitIntelligence: (show: boolean) => void;
   setSimulationOccupantCount: (count: number) => void;
+  setHazardSpreadRate: (rate: number) => void;
+  clearHazards: () => void;
 
   // Derived state helper
   getCurrentElements: () => EditorElement[];
@@ -354,6 +357,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   isPlayingSimulation: false,
   showExitIntelligence: true,
   simulationOccupantCount: 25,
+  hazardSpreadRate: 0.15,
+
+  setHazardSpreadRate: (rate: number) => set({ hazardSpreadRate: rate }),
+  clearHazards: () => {
+    const { history, historyIndex, selectedElementId } = get();
+    const currentElements = history[historyIndex];
+    const newElements = currentElements.filter(el => el.type !== "HAZARD");
+    if (newElements.length === currentElements.length) return;
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(newElements);
+    set({
+      history: newHistory,
+      historyIndex: newHistory.length - 1,
+      selectedElementId: selectedElementId && currentElements.find(e => e.id === selectedElementId)?.type === "HAZARD" ? null : selectedElementId
+    });
+  },
 
   setSimulationRun: (run) => set({ simulationRun: run, playbackFrameIndex: 0, isPlayingSimulation: false }),
   setPlaybackFrameIndex: (idx) => set({ playbackFrameIndex: idx }),

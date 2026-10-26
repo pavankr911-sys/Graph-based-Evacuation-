@@ -16,7 +16,8 @@ export function EditorTopbar() {
     blueprintImage, blueprintOpacity, setBlueprintImage, setBlueprintOpacity,
     addElements, addFloor, deleteFloor, renameFloor, duplicateFloorStructure,
     setFloorBlueprint, setFloorBlueprintOpacity, getActiveBlueprint, getActiveBlueprintOpacity,
-    simulationOccupantCount, setSimulationOccupantCount
+    simulationOccupantCount, setSimulationOccupantCount,
+    hazardSpreadRate, setHazardSpreadRate
   } = useEditorStore();
 
   const activeFloor = floors.find((f) => f.id === activeFloorId);
@@ -352,22 +353,30 @@ export function EditorTopbar() {
                 setIsGenerating(true);
                 const { startSimulation, getSimulation } = await import("@/lib/api/client");
                 
-                // Find hazard elements and map to nearest graph nodes
+                // Find hazard elements and map to nearest graph nodes on matching floor
                 const hazardNodes: string[] = [];
                 if (graph) {
                   const elements = getCurrentElements();
                   const hazards = elements.filter((el: any) => el.type === "HAZARD");
                   hazards.forEach((h: any) => {
+                    const targetFloor = floors.find((f: any) => f.id === h.floor_id);
+                    const targetFloorNum = targetFloor !== undefined ? targetFloor.floor_number : 0;
+                    
+                    const floorNodes = graph.nodes.filter((n: any) => n.floor_number === targetFloorNum);
+                    const candidateNodes = floorNodes.length > 0 ? floorNodes : graph.nodes;
+
                     let nearestNode = null;
                     let minDist = Infinity;
-                    graph.nodes.forEach(n => {
+                    candidateNodes.forEach((n: any) => {
                       const dist = Math.hypot(n.x - h.position_x, n.y - h.position_y);
                       if (dist < minDist) {
                         minDist = dist;
                         nearestNode = n.id;
                       }
                     });
-                    if (nearestNode) hazardNodes.push(nearestNode);
+                    if (nearestNode && !hazardNodes.includes(nearestNode)) {
+                      hazardNodes.push(nearestNode);
+                    }
                   });
                 }
                 
@@ -376,7 +385,7 @@ export function EditorTopbar() {
                   tick_rate_hz: 5, 
                   max_time_sec: 120,
                   hazard_ignition_nodes: hazardNodes,
-                  hazard_spread_rate: 0.2,
+                  hazard_spread_rate: hazardSpreadRate || 0.15,
                   routing_algorithm: "ALGO_D"
                 });
                 let sim = runInfo;

@@ -5,7 +5,7 @@ from app.main import app
 from app.core.database import AsyncSessionLocal, init_db
 
 
-@pytest_asyncio.fixture(autouse=True, loop_scope="session")
+@pytest_asyncio.fixture(autouse=True, loop_scope="function")
 async def setup_db():
     await init_db()
 

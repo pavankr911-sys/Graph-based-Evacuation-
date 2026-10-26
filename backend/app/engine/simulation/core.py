@@ -309,6 +309,7 @@ class EvacuationSimulation:
                             "node_id": str(node_id),
                             "x": node.x,
                             "y": node.y,
+                            "floor_number": getattr(node, "floor_number", 0),
                             "intensity": intensity
                         })
                         
