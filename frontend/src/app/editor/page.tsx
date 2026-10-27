@@ -10,7 +10,7 @@ import { ExitIntelligenceHUD } from "@/components/editor/ExitIntelligenceHUD";
 import { useEditorStore } from "@/store/editorStore";
 import { useSearchParams } from "next/navigation";
 import { useEffect, Suspense, useState } from "react";
-import { getSimulation, getBuilding } from "@/lib/api/client";
+import { getSimulation, getBuilding, generateGraph } from "@/lib/api/client";
 
 function EditorContent() {
   const is3DMode = useEditorStore((state) => state.is3DMode);
@@ -62,6 +62,11 @@ function EditorContent() {
         }
         
         useEditorStore.getState().loadState(floors, allElements);
+        
+        // Auto-generate & set navigation graph immediately so the building is simulation-ready
+        generateGraph(b.id).then(graph => {
+          useEditorStore.getState().setGraph(graph);
+        }).catch(err => console.warn("Auto-graph on editor page mount:", err));
       }).catch(console.error);
     }
   }, [buildingId]);

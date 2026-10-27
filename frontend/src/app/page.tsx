@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Building2, Activity, PlayCircle, PlusCircle, ArrowRight, ShieldCheck, Trophy, Sparkles, FolderOpen, Trash2, Layers, Play } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { deleteBuilding, saveBuilding } from "@/lib/api/client";
+import { deleteBuilding, saveBuilding, generateGraph } from "@/lib/api/client";
 import { createSampleAcademicBuilding } from "@/lib/editor/sampleBuilding";
 
 const API_BASE = "http://localhost:8000/api/v1";
@@ -66,6 +66,11 @@ export default function DashboardPage() {
     try {
       const sample = createSampleAcademicBuilding();
       await saveBuilding(sample.buildingId, sample.buildingName, sample.floors, sample.elements);
+      try {
+        await generateGraph(sample.buildingId);
+      } catch (gErr) {
+        console.warn("Auto-graph on demo create:", gErr);
+      }
       router.push(`/editor?buildingId=${sample.buildingId}`);
     } catch (err: any) {
       alert(`Failed to create academic demo: ${err.message}`);

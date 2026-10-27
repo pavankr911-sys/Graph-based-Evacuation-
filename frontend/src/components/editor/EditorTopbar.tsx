@@ -80,7 +80,14 @@ export function EditorTopbar() {
       if (!buildingId) {
         setBuildingInfo(idToSave, buildingName);
       }
-      alert("Building saved successfully.");
+      // Silently ensure graph topology is updated and ready
+      try {
+        const graph = await generateGraph(idToSave);
+        setGraph(graph);
+      } catch (gErr) {
+        console.warn("Auto-graph generation on save:", gErr);
+      }
+      alert("Building saved & ready for simulation.");
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -112,18 +119,27 @@ export function EditorTopbar() {
 
   return (
     <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 shadow-sm z-10">
-      <div className="flex items-center space-x-4">
-        <input type="text" value={buildingName} onChange={(e) => setBuildingInfo(buildingId || "", e.target.value)} className="font-semibold text-slate-800 text-sm border border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none bg-slate-50 px-2 py-1 rounded transition-colors" placeholder="Building Name..." title="Click to rename building" />
-        
-        {/* Saved Buildings Library Manager */}
-        <button
-          onClick={() => setIsBuildingsModalOpen(true)}
-          className="flex items-center px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg border border-indigo-200 transition-colors shadow-2xs cursor-pointer active:scale-95 shrink-0"
-          title="Open Saved Buildings Library & Pre-Configured Demo Templates"
-        >
-          <FolderOpen size={14} className="mr-1.5 text-indigo-600" />
-          <span>Saved Buildings</span>
-        </button>
+      <div className="flex items-center space-x-3">
+        {/* Building Name Input with Integrated Saved Buildings Library Trigger (Zero UI disturbance for Add Floor) */}
+        <div className="flex items-center bg-slate-50 border border-slate-200 hover:border-slate-300 focus-within:border-indigo-500 rounded-lg transition-colors shadow-2xs">
+          <button
+            onClick={() => setIsBuildingsModalOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border-r border-slate-200 rounded-l-lg text-xs font-bold transition-colors cursor-pointer"
+            title="Open Saved Buildings Library & Demo Templates"
+          >
+            <FolderOpen size={14} className="text-indigo-600" />
+            <span className="hidden sm:inline">Saved</span>
+          </button>
+          <input
+            type="text"
+            value={buildingName}
+            onChange={(e) => setBuildingInfo(buildingId || "", e.target.value)}
+            className="font-semibold text-slate-800 text-xs sm:text-sm bg-transparent outline-none px-2.5 py-1 w-32 sm:w-44"
+            placeholder="Building Name..."
+            title="Click to rename building"
+          />
+        </div>
+
         {/* Multi-Floor Management Suite */}
         <div className="flex items-center space-x-1.5">
           <div className="flex items-center text-slate-700 bg-slate-100 rounded-md px-3 py-1.5 border border-slate-200">
@@ -357,42 +373,60 @@ export function EditorTopbar() {
 
           <button 
             onClick={async () => {
-              if (!buildingId) {
-                alert("Please save and generate graph first.");
-                return;
-              }
+              setIsGenerating(true);
               try {
-                setIsGenerating(true);
                 const { startSimulation, getSimulation } = await import("@/lib/api/client");
                 
-                // Find hazard elements and map to nearest graph nodes on matching floor
-                const hazardNodes: string[] = [];
-                if (graph) {
-                  const elements = getCurrentElements();
-                  const hazards = elements.filter((el: any) => el.type === "HAZARD");
-                  hazards.forEach((h: any) => {
-                    const targetFloor = floors.find((f: any) => f.id === h.floor_id);
-                    const targetFloorNum = targetFloor !== undefined ? targetFloor.floor_number : 0;
-                    
-                    const floorNodes = graph.nodes.filter((n: any) => n.floor_number === targetFloorNum);
-                    const candidateNodes = floorNodes.length > 0 ? floorNodes : graph.nodes;
-
-                    let nearestNode = null;
-                    let minDist = Infinity;
-                    candidateNodes.forEach((n: any) => {
-                      const dist = Math.hypot(n.x - h.position_x, n.y - h.position_y);
-                      if (dist < minDist) {
-                        minDist = dist;
-                        nearestNode = n.id;
-                      }
-                    });
-                    if (nearestNode && !hazardNodes.includes(nearestNode)) {
-                      hazardNodes.push(nearestNode);
-                    }
-                  });
+                // 1. Frictionless auto-save current building state silently
+                const idToSave = buildingId || uuidv4();
+                if (!buildingId) {
+                  setBuildingInfo(idToSave, buildingName || "Untitled Building");
+                }
+                const elements = getCurrentElements();
+                await saveBuilding(idToSave, buildingName || "Untitled Building", floors, elements);
+                
+                // 2. Ensure graph topology is ready
+                let activeGraph = graph;
+                if (!activeGraph || !activeGraph.nodes || activeGraph.nodes.length === 0) {
+                  try {
+                    activeGraph = await generateGraph(idToSave);
+                    setGraph(activeGraph);
+                  } catch (gErr: any) {
+                    console.warn("Failed to generate graph for simulation:", gErr);
+                  }
                 }
                 
-                const runInfo = await startSimulation(buildingId, { 
+                if (!activeGraph || !activeGraph.nodes || activeGraph.nodes.length === 0) {
+                  alert("No navigable space found. Please add at least one room and exit before running the simulation.");
+                  return;
+                }
+                
+                // 3. Find hazard elements and map to nearest graph nodes on matching floor
+                const hazardNodes: string[] = [];
+                const hazards = elements.filter((el: any) => el.type === "HAZARD");
+                hazards.forEach((h: any) => {
+                  const targetFloor = floors.find((f: any) => f.id === h.floor_id);
+                  const targetFloorNum = targetFloor !== undefined ? targetFloor.floor_number : 0;
+                  
+                  const floorNodes = activeGraph.nodes.filter((n: any) => n.floor_number === targetFloorNum);
+                  const candidateNodes = floorNodes.length > 0 ? floorNodes : activeGraph.nodes;
+
+                  let nearestNode = null;
+                  let minDist = Infinity;
+                  candidateNodes.forEach((n: any) => {
+                    const dist = Math.hypot(n.x - h.position_x, n.y - h.position_y);
+                    if (dist < minDist) {
+                      minDist = dist;
+                      nearestNode = n.id;
+                    }
+                  });
+                  if (nearestNode && !hazardNodes.includes(nearestNode)) {
+                    hazardNodes.push(nearestNode);
+                  }
+                });
+                
+                // 4. Start simulation immediately
+                const runInfo = await startSimulation(idToSave, { 
                   occupant_count: simulationOccupantCount, 
                   tick_rate_hz: 5, 
                   max_time_sec: 120,
@@ -414,14 +448,14 @@ export function EditorTopbar() {
                   useEditorStore.getState().setSimulationRun(sim);
                 }
               } catch (e: any) {
-                alert(e.message);
+                alert("Simulation error: " + e.message);
               } finally {
                 setIsGenerating(false);
               }
             }}
             disabled={isGenerating}
-            className="flex items-center px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-md shadow-sm transition-colors disabled:opacity-50 ml-1"
-            title={`Run evacuation simulation with ${simulationOccupantCount} people`}
+            className="flex items-center px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-md shadow-sm transition-colors disabled:opacity-50 ml-1 cursor-pointer"
+            title={`Run evacuation simulation directly with ${simulationOccupantCount} people (auto-saves & prepares graph)`}
           >
             {isGenerating ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
             Run ({simulationOccupantCount})
@@ -429,15 +463,22 @@ export function EditorTopbar() {
         </div>
         
         <button
-          onClick={() => {
+          onClick={async () => {
+            const idToUse = buildingId || uuidv4();
             if (!buildingId) {
-              alert("Please save the building first.");
-              return;
+              setBuildingInfo(idToUse, buildingName || "Untitled Building");
             }
-            router.push(`/scenarios?buildingId=${buildingId}`);
+            try {
+              const elements = getCurrentElements();
+              await saveBuilding(idToUse, buildingName || "Untitled Building", floors, elements);
+              await generateGraph(idToUse);
+            } catch (e) {
+              console.warn("Auto save/graph before scenarios race:", e);
+            }
+            router.push(`/scenarios?buildingId=${idToUse}`);
           }}
-          className="flex items-center px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-sm font-semibold rounded-md shadow-xs transition-all"
-          title="Configure emergency scenarios or launch head-to-head algorithm race for this building"
+          className="flex items-center px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-sm font-semibold rounded-md shadow-xs transition-all cursor-pointer"
+          title="Configure emergency scenarios or launch head-to-head algorithm race (auto-saves building)"
         >
           <Trophy size={16} className="mr-1.5 text-amber-200" />
           Scenarios Race

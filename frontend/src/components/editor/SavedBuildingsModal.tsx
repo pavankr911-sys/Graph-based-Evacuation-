@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Building2, Plus, Trash2, FolderOpen, Play, Trophy, Sparkles, Check, X, Loader2, ArrowRight } from "lucide-react";
 import { useEditorStore } from "@/store/editorStore";
-import { getBuildings, deleteBuilding, getBuilding, saveBuilding } from "@/lib/api/client";
+import { getBuildings, deleteBuilding, getBuilding, saveBuilding, generateGraph } from "@/lib/api/client";
 import { createSampleAcademicBuilding } from "@/lib/editor/sampleBuilding";
 import { useRouter } from "next/navigation";
 
@@ -58,6 +58,15 @@ export function SavedBuildingsModal({ isOpen, onClose }: SavedBuildingsModalProp
       }
       setBuildingInfo(b.id, b.name);
       loadState(bFloors, allElements);
+      
+      // Auto-generate & store navigation graph immediately so building is 100% simulation-ready!
+      try {
+        const graph = await generateGraph(b.id);
+        useEditorStore.getState().setGraph(graph);
+      } catch (gErr) {
+        console.warn("Auto-graph on open building:", gErr);
+      }
+      
       onClose();
     } catch (err: any) {
       alert(`Failed to load building: ${err.message}`);
@@ -85,6 +94,25 @@ export function SavedBuildingsModal({ isOpen, onClose }: SavedBuildingsModalProp
     }
   };
 
+  const handleClearAll = async () => {
+    if (!confirm(`Are you sure you want to delete all ${buildings.length} saved buildings? This gives you a completely fresh slate.`)) {
+      return;
+    }
+    setActionLoadingId("clearAll");
+    try {
+      for (const b of buildings) {
+        await deleteBuilding(b.id);
+      }
+      newBuilding();
+      await fetchList();
+      alert("All previous building records have been cleared. Ready for fresh buildings!");
+    } catch (err: any) {
+      alert(`Failed to clear buildings: ${err.message}`);
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   const handleLoadSampleDemo = async () => {
     setActionLoadingId("sample");
     try {
@@ -93,6 +121,15 @@ export function SavedBuildingsModal({ isOpen, onClose }: SavedBuildingsModalProp
       await saveBuilding(sample.buildingId, sample.buildingName, sample.floors, sample.elements);
       setBuildingInfo(sample.buildingId, sample.buildingName);
       loadState(sample.floors, sample.elements);
+      
+      // Auto-generate & store navigation graph immediately so it's 100% simulation-ready!
+      try {
+        const graph = await generateGraph(sample.buildingId);
+        useEditorStore.getState().setGraph(graph);
+      } catch (gErr) {
+        console.warn("Auto-graph on sample demo:", gErr);
+      }
+      
       onClose();
     } catch (err: any) {
       alert(`Failed to load sample building: ${err.message}`);
@@ -119,6 +156,15 @@ export function SavedBuildingsModal({ isOpen, onClose }: SavedBuildingsModalProp
       const elements = getCurrentElements();
       await saveBuilding(newId, copyName.trim(), floors, elements);
       setBuildingInfo(newId, copyName.trim());
+      
+      // Auto-generate & store navigation graph immediately
+      try {
+        const graph = await generateGraph(newId);
+        useEditorStore.getState().setGraph(graph);
+      } catch (gErr) {
+        console.warn("Auto-graph on save copy:", gErr);
+      }
+      
       await fetchList();
       alert(`Building saved as "${copyName.trim()}"!`);
     } catch (err: any) {
@@ -195,6 +241,18 @@ export function SavedBuildingsModal({ isOpen, onClose }: SavedBuildingsModalProp
               <Plus size={14} className="mr-1 text-slate-500" />
               <span>+ New Blank</span>
             </button>
+
+            {buildings.length > 0 && (
+              <button
+                onClick={handleClearAll}
+                disabled={actionLoadingId !== null}
+                className="flex items-center px-2.5 py-1.5 bg-white hover:bg-red-50 text-slate-400 hover:text-red-600 text-xs font-medium rounded-lg border border-slate-200 hover:border-red-200 transition-colors cursor-pointer"
+                title="Clear all saved buildings for a fresh slate"
+              >
+                <Trash2 size={13} className="mr-1 text-slate-400" />
+                <span>Clear All</span>
+              </button>
+            )}
           </div>
         </div>
 
