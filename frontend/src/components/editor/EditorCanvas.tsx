@@ -1,6 +1,7 @@
 "use client";
 
 import { useEditorStore } from "@/store/editorStore";
+import { useUIStore } from "@/store/uiStore";
 import { Point, EditorElement, Room, Wall, Door, Stair, Exit } from "@/lib/editor/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
@@ -302,6 +303,16 @@ export function EditorCanvas() {
     const onWheel = (e: WheelEvent) => {
       // Prevent entire browser page zooming or scrolling
       e.preventDefault();
+
+      // Ctrl + Wheel: Zoom the entire application UI (Header, Toolbar, Editor, Panels)
+      if (e.ctrlKey) {
+        if (e.deltaY < 0) {
+          useUIStore.getState().zoomInUI();
+        } else {
+          useUIStore.getState().zoomOutUI();
+        }
+        return;
+      }
 
       const rect = el.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
