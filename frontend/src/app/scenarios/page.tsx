@@ -414,7 +414,7 @@ function ScenariosContent() {
               ) : (
                 <>
                   <Trophy size={18} className="mr-2 text-amber-300" />
-                  Run 4 Head-to-Head Algorithm Race
+                  Launch Head-to-Head Algorithm Race
                 </>
               )}
             </button>
@@ -432,7 +432,7 @@ function ScenariosContent() {
               ) : (
                 <>
                   <Play size={18} className="mr-2" />
-                  Run Single Simulation
+                  Execute Single Scenario
                 </>
               )}
             </button>

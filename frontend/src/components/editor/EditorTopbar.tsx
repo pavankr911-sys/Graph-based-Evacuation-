@@ -1,10 +1,7 @@
 "use client";
 
 import { useEditorStore } from "@/store/editorStore";
-import { 
-  Building, Plus, Copy, Trash2, Wand2, Upload, X,
-  Magnet, Save, Play, Loader2, Trophy, Users
-} from "lucide-react";
+import { Layers, Magnet, Save, Play, Loader2, Sparkles, Wand2, Trophy, Plus, Copy, Trash2, Building, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { saveBuilding, generateGraph, digitizeBlueprint } from "@/lib/api/client";
@@ -16,22 +13,20 @@ export function EditorTopbar() {
     floors, activeFloorId, setActiveFloor, gridSnapping, setGridSnapping,
     buildingId, buildingName, setBuildingInfo, getCurrentElements, setGraph,
     is3DMode, setIs3DMode, graph, showGraphOverlay, setShowGraphOverlay, 
-    addElements, addFloor, deleteFloor, duplicateFloorStructure,
+    blueprintImage, blueprintOpacity, setBlueprintImage, setBlueprintOpacity,
+    addElements, addFloor, deleteFloor, renameFloor, duplicateFloorStructure,
     setFloorBlueprint, setFloorBlueprintOpacity, getActiveBlueprint, getActiveBlueprintOpacity,
     simulationOccupantCount, setSimulationOccupantCount,
-    hazardSpreadRate
+    hazardSpreadRate, setHazardSpreadRate
   } = useEditorStore();
 
   const activeFloor = floors.find((f) => f.id === activeFloorId);
-  const activeFloorNumber = activeFloor ? activeFloor.floor_number : 0;
   const activeBlueprint = getActiveBlueprint();
   const activeBlueprintOpacity = getActiveBlueprintOpacity();
   
   const [isSaving, setIsSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDigitizing, setIsDigitizing] = useState(false);
-  const [isRunningRace, setIsRunningRace] = useState(false);
-  const [raceStatusText, setRaceStatusText] = useState("");
 
   const handleAutoDigitize = async (file: File) => {
     setIsDigitizing(true);
@@ -45,7 +40,7 @@ export function EditorTopbar() {
       reader.onload = (ev) => {
         if (ev.target?.result && targetFloorId) {
           setFloorBlueprint(targetFloorId, ev.target.result as string);
-          setFloorBlueprintOpacity(targetFloorId, 0.35);
+          setFloorBlueprintOpacity(targetFloorId, 0.3);
         }
       };
       reader.readAsDataURL(file);
@@ -63,7 +58,7 @@ export function EditorTopbar() {
 
       if (newElements.length > 0) {
         addElements(newElements);
-        alert(`Auto-Digitization Complete for ${floorTitle}!\nExtracted ${result.walls.length} walls and ${result.rooms.length} rooms.\nClick '3D View' to see your Digital Twin!`);
+        alert(`Auto-Digitization Complete for ${floorTitle}!\nExtracted ${result.walls.length} walls and ${result.rooms.length} rooms.\nClick '3D' to view in your Multi-Story Digital Twin!`);
       } else {
         alert("No clear walls or rooms could be detected in this image. Try an image with higher contrast or clear black lines.");
       }
@@ -99,184 +94,52 @@ export function EditorTopbar() {
     
     setIsGenerating(true);
     try {
+      // It's a good idea to save first to ensure backend has latest state
       const elements = getCurrentElements();
       await saveBuilding(buildingId, buildingName, floors, elements);
-      const newGraph = await generateGraph(buildingId);
-      setGraph(newGraph);
-      setShowGraphOverlay(true);
-      alert(`Graph generated successfully!\nNodes: ${newGraph.nodes.length} | Edges: ${newGraph.edges.length}`);
+      
+      const graph = await generateGraph(buildingId);
+      setGraph(graph);
+      alert(`Graph generated successfully!\\nNodes: ${graph.nodes.length}\\nEdges: ${graph.edges.length}`);
     } catch (e: any) {
       alert(e.message);
     } finally {
       setIsGenerating(false);
-    }
-  };
-
-  const handleRunSimulation = async () => {
-    if (!buildingId) {
-      alert("Please save and generate graph first.");
-      return;
-    }
-    try {
-      setIsGenerating(true);
-      const { startSimulation, getSimulation } = await import("@/lib/api/client");
-      
-      const elements = getCurrentElements();
-      await saveBuilding(buildingId, buildingName, floors, elements);
-
-      // Map hazard elements to nearest graph nodes
-      const hazardNodes: string[] = [];
-      if (graph) {
-        const hazards = elements.filter((el: any) => el.type === "HAZARD");
-        hazards.forEach((h: any) => {
-          const targetFloor = floors.find((f: any) => f.id === h.floor_id);
-          const targetFloorNum = targetFloor !== undefined ? targetFloor.floor_number : 0;
-          const floorNodes = graph.nodes.filter((n: any) => n.floor_number === targetFloorNum);
-          const candidateNodes = floorNodes.length > 0 ? floorNodes : graph.nodes;
-
-          let nearestNode = null;
-          let minDist = Infinity;
-          candidateNodes.forEach((n: any) => {
-            const dist = Math.hypot(n.x - h.position_x, n.y - h.position_y);
-            if (dist < minDist) {
-              minDist = dist;
-              nearestNode = n.id;
-            }
-          });
-          if (nearestNode && !hazardNodes.includes(nearestNode)) {
-            hazardNodes.push(nearestNode);
-          }
-        });
-      }
-      
-      const runInfo = await startSimulation(buildingId, { 
-        occupant_count: simulationOccupantCount, 
-        tick_rate_hz: 5, 
-        max_time_sec: 120,
-        hazard_ignition_nodes: hazardNodes,
-        hazard_spread_rate: hazardSpreadRate || 0.15,
-        routing_algorithm: "ALGO_D"
-      });
-      let sim = runInfo;
-      
-      while (sim.status === "PENDING" || sim.status === "RUNNING") {
-        await new Promise(r => setTimeout(r, 1000));
-        sim = await getSimulation(sim.id);
-      }
-      
-      if (sim.status === "FAILED") {
-        alert("Simulation failed: " + sim.error_message);
-      } else {
-        useEditorStore.getState().setSimulationRun(sim);
-      }
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const handleRun4HeadToHead = async () => {
-    if (!buildingId) {
-      alert("Please save the building first.");
-      return;
-    }
-    setIsRunningRace(true);
-    setRaceStatusText("Launching 4-Algorithm Head-to-Head Race...");
-    try {
-      const elements = getCurrentElements();
-      await saveBuilding(buildingId, buildingName, floors, elements);
-
-      // Collect hazard ignition nodes
-      const hazardNodes: string[] = [];
-      if (graph) {
-        const hazards = elements.filter((el: any) => el.type === "HAZARD");
-        hazards.forEach((h: any) => {
-          const targetFloor = floors.find((f: any) => f.id === h.floor_id);
-          const targetFloorNum = targetFloor !== undefined ? targetFloor.floor_number : 0;
-          const floorNodes = graph.nodes.filter((n: any) => n.floor_number === targetFloorNum);
-          const candidateNodes = floorNodes.length > 0 ? floorNodes : graph.nodes;
-
-          let nearestNode = null;
-          let minDist = Infinity;
-          candidateNodes.forEach((n: any) => {
-            const dist = Math.hypot(n.x - h.position_x, n.y - h.position_y);
-            if (dist < minDist) {
-              minDist = dist;
-              nearestNode = n.id;
-            }
-          });
-          if (nearestNode && !hazardNodes.includes(nearestNode)) {
-            hazardNodes.push(nearestNode);
-          }
-        });
-      }
-
-      const { compareAlgorithms } = await import("@/lib/api/client");
-      const payload = {
-        occupant_count: simulationOccupantCount,
-        tick_rate_hz: 5.0,
-        max_time_sec: 120,
-        hazard_ignition_nodes: hazardNodes,
-        hazard_spread_rate: hazardSpreadRate || 0.15,
-        algorithms: ["ALGO_A", "ALGO_B", "ALGO_C", "ALGO_D"]
-      };
-
-      setRaceStatusText("Running Dijkstra, Safety-Aware, Load-Aware, & Predictive...");
-      const comparison = await compareAlgorithms(buildingId, payload);
-      
-      if (typeof window !== "undefined") {
-        localStorage.setItem("latest_comparison", JSON.stringify(comparison));
-      }
-
-      router.push(`/simulations?buildingId=${buildingId}&race=true`);
-    } catch (err: any) {
-      alert(`Comparative race failed: ${err.message}`);
-    } finally {
-      setIsRunningRace(false);
-      setRaceStatusText("");
     }
   };
 
   return (
-    <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-3 shrink-0 shadow-xs z-10 overflow-x-auto scrollbar-none gap-2 select-none">
-      
-      {/* 1. Left Cluster: Building Name & Multi-Floor Navigation */}
-      <div className="flex items-center space-x-2 shrink-0">
-        <input 
-          type="text" 
-          value={buildingName} 
-          onChange={(e) => setBuildingInfo(buildingId || "", e.target.value)} 
-          className="font-bold text-slate-800 text-xs border border-transparent hover:border-slate-300 focus:border-indigo-500 focus:outline-none bg-slate-50 px-2.5 py-1.5 rounded-lg w-28 sm:w-36 transition-colors" 
-          placeholder="Building Name..." 
-          title="Click to rename building" 
-        />
-
-        {/* Multi-Floor Management */}
-        <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-          <Building size={14} className="text-indigo-600 ml-1 shrink-0" />
-          <select 
-            className="bg-transparent border-none text-xs font-bold text-slate-700 outline-none cursor-pointer pr-1"
-            value={activeFloorId || ""}
-            onChange={(e) => setActiveFloor(e.target.value)}
-          >
-            {floors.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.floor_number === 0 ? "L0: Ground" : `L${f.floor_number}: ${f.name}`}
-              </option>
-            ))}
-          </select>
+    <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 shadow-sm z-10">
+      <div className="flex items-center space-x-4">
+        <input type="text" value={buildingName} onChange={(e) => setBuildingInfo(buildingId || "", e.target.value)} className="font-semibold text-slate-800 text-sm border border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none bg-slate-50 px-2 py-1 rounded transition-colors" placeholder="Building Name..." title="Click to rename building" />
+        {/* Multi-Floor Management Suite */}
+        <div className="flex items-center space-x-1.5">
+          <div className="flex items-center text-slate-700 bg-slate-100 rounded-md px-3 py-1.5 border border-slate-200">
+            <Building size={16} className="mr-2 text-indigo-600" />
+            <select 
+              className="bg-transparent border-none text-sm font-semibold outline-none cursor-pointer"
+              value={activeFloorId || ""}
+              onChange={(e) => setActiveFloor(e.target.value)}
+            >
+              {floors.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.floor_number === 0 ? "🏢 Ground Floor" : `🏢 Floor ${f.floor_number}`} ({f.name})
+                </option>
+              ))}
+            </select>
+          </div>
 
           <button
             onClick={() => {
               const newId = addFloor();
               const newFloor = useEditorStore.getState().floors.find((f) => f.id === newId);
-              alert(`Created ${newFloor?.name || "New Floor"}!`);
+              alert(`Created ${newFloor?.name || "New Floor"}!\nYou can now draw or click 'Auto-Digitize Blueprint' for this level.`);
             }}
-            className="p-1 text-indigo-700 hover:bg-indigo-100 rounded transition-colors cursor-pointer"
+            className="flex items-center px-2.5 py-1.5 text-xs font-semibold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-md transition-colors cursor-pointer"
             title="Add Next Floor Level (e.g. Floor 1, Floor 2)"
           >
-            <Plus size={14} />
+            <Plus size={14} className="mr-1" />
+            Add Floor
           </button>
 
           {activeFloor && activeFloor.floor_number > 0 && (
@@ -284,56 +147,94 @@ export function EditorTopbar() {
               onClick={() => {
                 const lowerFloor = floors.find((f) => f.floor_number === activeFloor.floor_number - 1);
                 if (lowerFloor && activeFloorId) {
-                  if (confirm(`Duplicate walls & stairs from ${lowerFloor.name} to ${activeFloor.name}?`)) {
+                  if (confirm(`Duplicate walls and stair shafts from ${lowerFloor.name} to ${activeFloor.name}?`)) {
                     duplicateFloorStructure(lowerFloor.id, activeFloorId);
                     alert(`Copied structure from ${lowerFloor.name}!`);
                   }
                 }
               }}
-              className="p-1 text-slate-600 hover:bg-slate-200 rounded transition-colors cursor-pointer"
-              title="Copy outer walls & stairs from floor below"
+              className="flex items-center px-2 py-1.5 text-xs font-medium bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200 rounded-md transition-colors cursor-pointer"
+              title="Copy outer walls & stair shafts from the floor below (guarantees stair shafts align)"
             >
-              <Copy size={13} />
+              <Copy size={13} className="mr-1 text-slate-500" />
+              Copy Below
             </button>
           )}
 
           {floors.length > 1 && (
             <button
               onClick={() => {
-                if (activeFloorId && confirm(`Delete ${activeFloor?.name}? Elements on this floor will be deleted.`)) {
+                if (activeFloorId && confirm(`Delete ${activeFloor?.name}? All elements on this level will be removed.`)) {
                   deleteFloor(activeFloorId);
                 }
               }}
-              className="p-1 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
+              className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
               title="Delete Active Floor"
             >
-              <Trash2 size={13} />
+              <Trash2 size={14} />
             </button>
           )}
         </div>
       </div>
       
-      {/* 2. Middle Cluster: Direct 1-Click Blueprint Tools & View Modes */}
-      <div className="flex items-center space-x-1.5 shrink-0">
-        
-        {/* Direct Button 1: ⚡ Auto-Digitize Blueprint (OpenCV Vision) */}
+      <div className="flex items-center space-x-3">
+        {activeBlueprint && (
+          <div className="flex items-center space-x-2 mr-2 border-r border-slate-200 pr-4">
+            <span className="text-xs text-slate-500 font-medium">Sketch Opacity</span>
+            <input 
+              type="range" min="0" max="1" step="0.05" 
+              value={activeBlueprintOpacity !== undefined ? activeBlueprintOpacity : 0.4} 
+              onChange={(e) => {
+                const targetFloorId = activeFloorId || floors[0]?.id;
+                if (targetFloorId) {
+                  setFloorBlueprintOpacity(targetFloorId, parseFloat(e.target.value));
+                }
+              }}
+              className="w-20"
+            />
+          </div>
+        )}
+
+        <label className="flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-colors border bg-white text-slate-600 border-slate-200 hover:bg-slate-50 cursor-pointer" title="Upload CAD floorplan sketch for this active level">
+          <span className="mr-1.5">Upload Blueprint</span>
+          <input 
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              const targetFloorId = activeFloorId || floors[0]?.id;
+              if (file && targetFloorId) {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                  if (ev.target?.result) {
+                    setFloorBlueprint(targetFloorId, ev.target.result as string);
+                    setFloorBlueprintOpacity(targetFloorId, 0.4);
+                  }
+                };
+                reader.readAsDataURL(file);
+              }
+            }}
+          />
+        </label>
+
         <label 
-          className={`flex items-center px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer shadow-2xs ${
+          className={`flex items-center px-3 py-1.5 rounded-md text-sm font-semibold transition-all border cursor-pointer ${
             isDigitizing
               ? "bg-purple-100 text-purple-700 border-purple-300 animate-pulse"
               : "bg-gradient-to-r from-purple-50 to-indigo-50 text-indigo-700 border-indigo-200 hover:border-indigo-400 hover:shadow-xs"
           }`}
-          title="Click to select a CAD sketch or floorplan image to automatically extract walls & rooms using OpenCV AI Vision"
+          title="Upload a CAD sketch or floorplan image to automatically extract walls & rooms using OpenCV Computer Vision"
         >
           {isDigitizing ? (
             <>
-              <Loader2 size={13} className="mr-1.5 animate-spin text-purple-600" />
-              <span>Digitizing...</span>
+              <Loader2 size={16} className="mr-1.5 animate-spin text-purple-600" />
+              <span>Digitizing Sketch...</span>
             </>
           ) : (
             <>
-              <Wand2 size={13} className="mr-1.5 text-indigo-600" />
-              <span>⚡ Auto-Digitize</span>
+              <Wand2 size={16} className="mr-1.5 text-indigo-600" />
+              <span>⚡ Auto-Digitize Blueprint</span>
             </>
           )}
           <input 
@@ -351,124 +252,67 @@ export function EditorTopbar() {
           />
         </label>
 
-        {/* Direct Button 2: Upload Reference Blueprint */}
-        <label 
-          className="flex items-center px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 cursor-pointer shadow-2xs transition-colors"
-          title="Upload a background blueprint sketch to draw on top of for this floor"
-        >
-          <Upload size={13} className="mr-1.5 text-slate-500" />
-          <span>Upload Blueprint</span>
-          <input 
-            type="file" 
-            accept="image/*" 
-            className="hidden" 
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              const targetFloorId = activeFloorId || floors[0]?.id;
-              if (file && targetFloorId) {
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                  if (ev.target?.result) {
-                    setFloorBlueprint(targetFloorId, ev.target.result as string);
-                    setFloorBlueprintOpacity(targetFloorId, 0.4);
-                  }
-                };
-                reader.readAsDataURL(file);
-                e.target.value = "";
-              }
-            }}
-          />
-        </label>
-
-        {/* Blueprint Opacity Control (Only shown when active blueprint exists on this floor) */}
-        {activeBlueprint && (
-          <div className="flex items-center space-x-1.5 bg-purple-50/80 px-2 py-1 rounded-lg border border-purple-200 text-xs">
-            <span className="text-[10px] font-bold text-purple-700">Opacity:</span>
-            <input 
-              type="range" min="0" max="1" step="0.05" 
-              value={activeBlueprintOpacity !== undefined ? activeBlueprintOpacity : 0.4} 
-              onChange={(e) => {
-                if (activeFloorId) {
-                  setFloorBlueprintOpacity(activeFloorId, parseFloat(e.target.value));
-                }
-              }}
-              className="w-14 h-1 bg-purple-200 rounded-lg cursor-pointer"
-              title="Adjust blueprint background opacity"
-            />
-            <span className="text-[10px] font-mono font-bold text-purple-700 w-6">
-              {Math.round((activeBlueprintOpacity || 0.4) * 100)}%
-            </span>
-            <button
-              onClick={() => {
-                if (activeFloorId) {
-                  setFloorBlueprint(activeFloorId, null);
-                }
-              }}
-              className="p-0.5 text-slate-400 hover:text-red-600 rounded transition-colors cursor-pointer"
-              title="Clear blueprint reference"
-            >
-              <X size={12} />
-            </button>
-          </div>
+        {graph && (
+           <button
+              onClick={() => setShowGraphOverlay(!showGraphOverlay)}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${
+                showGraphOverlay 
+                ? "bg-purple-100 text-purple-700 border-purple-200" 
+                : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+              }`}
+           >
+             {showGraphOverlay ? "Hide Graph" : "Show Graph"}
+           </button>
         )}
 
-        {/* 2D / 3D Mode Toggle */}
         <button 
           onClick={() => setIs3DMode(!is3DMode)}
-          className={`px-2.5 py-1.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+          className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
             is3DMode 
-              ? "bg-slate-900 text-white border-slate-900 shadow-2xs" 
-              : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+              ? "bg-slate-800 text-white border-slate-900" 
+              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
           }`}
-          title="Toggle 2D Floorplan & 3D Multi-Story Digital Twin"
+          title="Toggle 3D View"
         >
-          {is3DMode ? "2D View" : "3D View"}
+          {is3DMode ? "2D" : "3D"}
         </button>
-
-        {/* Snap */}
+        
         <button 
           onClick={() => setGridSnapping(!gridSnapping)}
-          className={`flex items-center px-2 py-1.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer ${
+          className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
             gridSnapping 
-              ? "bg-blue-50 text-blue-700 border-blue-200 shadow-2xs" 
+              ? "bg-blue-50 text-blue-700 border-blue-200" 
               : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
           }`}
           title="Toggle Grid Snapping"
         >
-          <Magnet size={13} className="mr-1" />
-          <span>Snap</span>
+          <Magnet size={16} className="mr-2" />
+          Snap
         </button>
-
-        {/* Save */}
+        
         <button 
           onClick={handleSave}
           disabled={isSaving}
-          className="flex items-center px-2.5 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg shadow-2xs transition-colors border border-slate-200 disabled:opacity-50 cursor-pointer"
-          title="Save Building & Floor Structure (Ctrl + S)"
+          className="flex items-center px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium rounded-md shadow-sm transition-colors border border-slate-200 disabled:opacity-50"
         >
-          {isSaving ? <Loader2 size={13} className="mr-1 animate-spin text-indigo-600" /> : <Save size={13} className="mr-1 text-slate-500" />}
-          <span>Save</span>
+          {isSaving ? <Loader2 size={16} className="mr-2 animate-spin" /> : <Save size={16} className="mr-2" />}
+          Save
         </button>
-
-        {/* Generate Graph */}
+        
         <button 
           onClick={handleGenerateGraph}
           disabled={isGenerating}
-          className="flex items-center px-2.5 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors disabled:opacity-50 cursor-pointer"
-          title="Generate spatial navigation mesh & graph edges"
+          className="flex items-center px-4 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium rounded-md shadow-sm transition-colors disabled:opacity-50"
         >
-          {isGenerating ? <Loader2 size={13} className="mr-1 animate-spin" /> : <Play size={13} className="mr-1" />}
-          <span>Graph</span>
+          {isGenerating ? <Loader2 size={16} className="mr-2 animate-spin" /> : <Play size={16} className="mr-2" />}
+          Generate Graph
         </button>
-      </div>
-
-      {/* 3. VIP Right Cluster: Execution Hub (ALWAYS VISIBLE & PROMINENT) */}
-      <div className="flex items-center space-x-2 shrink-0">
         
-        {/* Occupant Count Input & Presets */}
+        {/* Occupant Selection & Run Simulation Group */}
         <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 shadow-2xs">
-          <div className="flex items-center px-1.5 py-0.5 text-xs gap-1" title="Select number of evacuees">
-            <Users size={13} className="text-emerald-700 shrink-0" />
+          <div className="flex items-center px-2 py-1 text-xs gap-1.5" title="Select number of simulated people">
+            <Users size={14} className="text-emerald-700 shrink-0" />
+            <span className="text-slate-600 font-medium whitespace-nowrap">People:</span>
             <input
               type="number"
               min={1}
@@ -478,59 +322,115 @@ export function EditorTopbar() {
                 const val = parseInt(e.target.value);
                 setSimulationOccupantCount(isNaN(val) ? 1 : Math.max(1, Math.min(1000, val)));
               }}
-              className="w-10 text-center font-bold text-slate-800 bg-white border border-slate-300 rounded px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 shadow-2xs"
+              className="w-12 text-center font-bold text-slate-800 bg-white border border-slate-300 rounded px-1 py-0.5 text-xs focus:outline-none focus:ring-1 focus:ring-emerald-500 shadow-2xs"
             />
+            {/* Quick Presets */}
+            <div className="hidden sm:flex items-center space-x-1 pl-1 border-l border-slate-200">
+              {[10, 25, 50, 100].map((preset) => (
+                <button
+                  key={preset}
+                  onClick={() => setSimulationOccupantCount(preset)}
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-semibold transition-all ${
+                    simulationOccupantCount === preset
+                      ? "bg-emerald-600 text-white shadow-2xs"
+                      : "bg-white text-slate-600 hover:bg-slate-200 border border-slate-200"
+                  }`}
+                  title={`Set to ${preset} people`}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="hidden xl:flex items-center space-x-0.5 pr-1 border-l border-slate-200 pl-1">
-            {[10, 25, 50, 100].map((preset) => (
-              <button
-                key={preset}
-                onClick={() => setSimulationOccupantCount(preset)}
-                className={`px-1 py-0.5 rounded text-[10px] font-semibold transition-all cursor-pointer ${
-                  simulationOccupantCount === preset
-                    ? "bg-emerald-600 text-white"
-                    : "bg-white text-slate-600 hover:bg-slate-200 border border-slate-200/80"
-                }`}
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
+          <button 
+            onClick={async () => {
+              if (!buildingId) {
+                alert("Please save and generate graph first.");
+                return;
+              }
+              try {
+                setIsGenerating(true);
+                const { startSimulation, getSimulation } = await import("@/lib/api/client");
+                
+                // Find hazard elements and map to nearest graph nodes on matching floor
+                const hazardNodes: string[] = [];
+                if (graph) {
+                  const elements = getCurrentElements();
+                  const hazards = elements.filter((el: any) => el.type === "HAZARD");
+                  hazards.forEach((h: any) => {
+                    const targetFloor = floors.find((f: any) => f.id === h.floor_id);
+                    const targetFloorNum = targetFloor !== undefined ? targetFloor.floor_number : 0;
+                    
+                    const floorNodes = graph.nodes.filter((n: any) => n.floor_number === targetFloorNum);
+                    const candidateNodes = floorNodes.length > 0 ? floorNodes : graph.nodes;
+
+                    let nearestNode = null;
+                    let minDist = Infinity;
+                    candidateNodes.forEach((n: any) => {
+                      const dist = Math.hypot(n.x - h.position_x, n.y - h.position_y);
+                      if (dist < minDist) {
+                        minDist = dist;
+                        nearestNode = n.id;
+                      }
+                    });
+                    if (nearestNode && !hazardNodes.includes(nearestNode)) {
+                      hazardNodes.push(nearestNode);
+                    }
+                  });
+                }
+                
+                const runInfo = await startSimulation(buildingId, { 
+                  occupant_count: simulationOccupantCount, 
+                  tick_rate_hz: 5, 
+                  max_time_sec: 120,
+                  hazard_ignition_nodes: hazardNodes,
+                  hazard_spread_rate: hazardSpreadRate || 0.15,
+                  routing_algorithm: "ALGO_D"
+                });
+                let sim = runInfo;
+                
+                // Poll until complete
+                while (sim.status === "PENDING" || sim.status === "RUNNING") {
+                  await new Promise(r => setTimeout(r, 1000));
+                  sim = await getSimulation(sim.id);
+                }
+                
+                if (sim.status === "FAILED") {
+                  alert("Simulation failed: " + sim.error_message);
+                } else {
+                  useEditorStore.getState().setSimulationRun(sim);
+                }
+              } catch (e: any) {
+                alert(e.message);
+              } finally {
+                setIsGenerating(false);
+              }
+            }}
+            disabled={isGenerating}
+            className="flex items-center px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-md shadow-sm transition-colors disabled:opacity-50 ml-1"
+            title={`Run evacuation simulation with ${simulationOccupantCount} people`}
+          >
+            {isGenerating ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
+            Run ({simulationOccupantCount})
+          </button>
         </div>
-
-        {/* VIP Button 1: Run Simulation (Single Algorithm) */}
-        <button 
-          onClick={handleRunSimulation}
-          disabled={isGenerating || isRunningRace}
-          className="flex items-center px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold rounded-lg shadow-sm transition-all disabled:opacity-50 cursor-pointer"
-          title={`Run predictive evacuation simulation with ${simulationOccupantCount} people`}
-        >
-          {isGenerating ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Play size={13} className="mr-1.5 fill-current" />}
-          <span>Run ({simulationOccupantCount})</span>
-        </button>
-
-        {/* VIP Button 2: Run 4 Head-to-Head Race (PROMINENT & DIRECTLY EXECUTABLE!) */}
+        
         <button
-          onClick={handleRun4HeadToHead}
-          disabled={isRunningRace || isGenerating}
-          className="flex items-center px-3.5 py-1.5 bg-gradient-to-r from-amber-500 via-orange-500 to-purple-600 hover:from-amber-600 hover:to-purple-700 active:scale-95 text-white text-xs font-bold rounded-lg shadow-sm transition-all disabled:opacity-50 cursor-pointer ring-1 ring-amber-300/40"
-          title="Run 4 Head-to-Head Race: Simultaneously compare Algorithm A (Shortest), B (Safety), C (Load), and D (Predictive)"
+          onClick={() => {
+            if (!buildingId) {
+              alert("Please save the building first.");
+              return;
+            }
+            router.push(`/scenarios?buildingId=${buildingId}`);
+          }}
+          className="flex items-center px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white text-sm font-semibold rounded-md shadow-xs transition-all"
+          title="Configure emergency scenarios or launch head-to-head algorithm race for this building"
         >
-          {isRunningRace ? (
-            <>
-              <Loader2 size={14} className="mr-1.5 animate-spin text-amber-200" />
-              <span>{raceStatusText || "Racing 4 Algos..."}</span>
-            </>
-          ) : (
-            <>
-              <Trophy size={14} className="mr-1.5 text-amber-200 shrink-0" />
-              <span>Run 4 Head-to-Head</span>
-            </>
-          )}
+          <Trophy size={16} className="mr-1.5 text-amber-200" />
+          Scenarios Race
         </button>
       </div>
-
     </div>
   );
 }
