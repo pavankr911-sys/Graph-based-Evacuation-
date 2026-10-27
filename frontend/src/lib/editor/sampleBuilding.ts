@@ -77,6 +77,10 @@ export function createSampleAcademicBuilding(): {
       name: "Seminar Hall",
       coords: [{ x: 14, y: 11 }, { x: 26, y: 11 }, { x: 26, y: 18 }, { x: 14, y: 18 }],
     },
+    {
+      name: "Ground Floor Central Corridor",
+      coords: [{ x: 2, y: 9 }, { x: 26, y: 9 }, { x: 26, y: 11 }, { x: 2, y: 11 }],
+    },
   ];
 
   f0Rooms.forEach((r) => {
@@ -161,6 +165,10 @@ export function createSampleAcademicBuilding(): {
     {
       name: "Faculty Conference Room",
       coords: [{ x: 14, y: 11 }, { x: 26, y: 11 }, { x: 26, y: 18 }, { x: 14, y: 18 }],
+    },
+    {
+      name: "Level 1 Central Corridor",
+      coords: [{ x: 2, y: 9 }, { x: 26, y: 9 }, { x: 26, y: 11 }, { x: 2, y: 11 }],
     },
   ];
 

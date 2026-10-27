@@ -127,13 +127,32 @@ def rasterize_floor(p_floor: PFloor) -> WalkabilityGrid:
         default_cell=CellType.EMPTY
     )
 
-    # 1. Determine Interior Walkable Cells
-    has_valid_rooms = False
+    # 1. Determine Interior Walkable Cells (Rooms, Corridors, Hallways, and Open Spaces)
+    # The entire building envelope defined by exterior walls represents habitable interior space
+    if len(p_floor.walls) > 0:
+        min_wx = min(min(w.segment.start.x, w.segment.end.x) for w in p_floor.walls)
+        max_wx = max(max(w.segment.start.x, w.segment.end.x) for w in p_floor.walls)
+        min_wy = min(min(w.segment.start.y, w.segment.end.y) for w in p_floor.walls)
+        max_wy = max(max(w.segment.start.y, w.segment.end.y) for w in p_floor.walls)
+
+        scx = max(0, int(math.floor(min_wx / res)))
+        ecx = min(width_cells - 1, int(math.ceil(max_wx / res)))
+        scy = max(0, int(math.floor(min_wy / res)))
+        ecy = min(height_cells - 1, int(math.ceil(max_wy / res)))
+
+        for cx in range(scx, ecx + 1):
+            for cy in range(scy, ecy + 1):
+                grid.set_cell(cx, cy, CellType.WALKABLE)
+    else:
+        for cx in range(width_cells):
+            for cy in range(height_cells):
+                grid.set_cell(cx, cy, CellType.WALKABLE)
+
+    # In addition, ensure all designated room polygons are marked WALKABLE
     for room in p_floor.rooms:
         if room.geometry and "coordinates" in room.geometry:
             coords = room.geometry["coordinates"]
             if isinstance(coords, list) and len(coords) >= 3:
-                has_valid_rooms = True
                 poly_pts = [(p["x"], p["y"]) for p in coords]
                 min_rx = min(p[0] for p in poly_pts)
                 max_rx = max(p[0] for p in poly_pts)
@@ -152,31 +171,8 @@ def rasterize_floor(p_floor: PFloor) -> WalkabilityGrid:
                         if _point_in_polygon(px, py, poly_pts):
                             grid.set_cell(cx, cy, CellType.WALKABLE)
 
-    # If no rooms with polygon geometry exist, fallback to wall envelope
-    if not has_valid_rooms:
-        if len(p_floor.walls) > 0:
-            min_wx = min(min(w.segment.start.x, w.segment.end.x) for w in p_floor.walls)
-            max_wx = max(max(w.segment.start.x, w.segment.end.x) for w in p_floor.walls)
-            min_wy = min(min(w.segment.start.y, w.segment.end.y) for w in p_floor.walls)
-            max_wy = max(max(w.segment.start.y, w.segment.end.y) for w in p_floor.walls)
-
-            scx = max(0, int(math.floor(min_wx / res)))
-            ecx = min(width_cells - 1, int(math.ceil(max_wx / res)))
-            scy = max(0, int(math.floor(min_wy / res)))
-            ecy = min(height_cells - 1, int(math.ceil(max_wy / res)))
-
-            for cx in range(scx, ecx + 1):
-                for cy in range(scy, ecy + 1):
-                    grid.set_cell(cx, cy, CellType.WALKABLE)
-        else:
-            # Completely blank floor without any walls: all cells walkable
-            for cx in range(width_cells):
-                for cy in range(height_cells):
-                    grid.set_cell(cx, cy, CellType.WALKABLE)
-
     # 2. Rasterize walls as OBSTACLES
     for wall in p_floor.walls:
-        # Optimization: Only check cells in the bounding box of the wall segment
         min_x = min(wall.segment.start.x, wall.segment.end.x)
         max_x = max(wall.segment.start.x, wall.segment.end.x)
         min_y = min(wall.segment.start.y, wall.segment.end.y)
@@ -200,7 +196,7 @@ def rasterize_floor(p_floor: PFloor) -> WalkabilityGrid:
                 ):
                     grid.set_cell(cx, cy, CellType.OBSTACLE)
 
-    # 3. Rasterize doors as DOOR (Overwrites OBSTACLES if they overlap)
+    # 3. Rasterize doors as DOOR (Overwrites OBSTACLES)
     for door in p_floor.doors:
         cx = int(math.floor(door.center.x / res))
         cy = int(math.floor(door.center.y / res))
@@ -212,7 +208,7 @@ def rasterize_floor(p_floor: PFloor) -> WalkabilityGrid:
         cy = int(math.floor(stair.center.y / res))
         grid.set_cell(cx, cy, CellType.STAIR)
 
-    # 5. Rasterize exits as EXIT
+    # 5. Rasterize exits as EXIT (Overwrites boundary wall obstacles)
     for exit_obj in p_floor.exits:
         cx = int(math.floor(exit_obj.center.x / res))
         cy = int(math.floor(exit_obj.center.y / res))

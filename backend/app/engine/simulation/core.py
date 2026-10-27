@@ -1,8 +1,9 @@
 import logging
 import asyncio
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple, Set
 from datetime import datetime
 from uuid import uuid4, UUID
+import heapq
 
 from app.models.graph import GraphTopology
 from app.schemas.simulation import AgentState, SimulationFrame, SimulationConfigCreate
@@ -12,6 +13,147 @@ from app.engine.simulation.pathfinding import Navigator
 from app.engine.simulation.hazard import HazardEngine
 import random
 import math
+
+
+def _segment_intersects_aabb(p1: Tuple[float, float], p2: Tuple[float, float], box: Tuple[float, float, float, float]) -> bool:
+    """Liang-Barsky segment clipping against axis-aligned bounding box."""
+    b_min_x, b_min_y, b_max_x, b_max_y = box
+    x1, y1 = p1
+    x2, y2 = p2
+    
+    if max(x1, x2) < b_min_x or min(x1, x2) > b_max_x or max(y1, y2) < b_min_y or min(y1, y2) > b_max_y:
+        return False
+        
+    dx = x2 - x1
+    dy = y2 - y1
+    
+    t_min = 0.0
+    t_max = 1.0
+    
+    for p, q in [(-dx, x1 - b_min_x), (dx, b_max_x - x1), (-dy, y1 - b_min_y), (dy, b_max_y - y1)]:
+        if abs(p) < 1e-9:
+            if q < 0:
+                return False
+        else:
+            t = q / p
+            if p < 0:
+                if t > t_min:
+                    t_min = t
+            else:
+                if t < t_max:
+                    t_max = t
+            if t_min > t_max:
+                return False
+            
+    return True
+
+
+def _plan_outdoor_perimeter_path(
+    start: Tuple[float, float],
+    target: Tuple[float, float],
+    building_bounds: Tuple[float, float, float, float],
+    margin: float = 3.0
+) -> List[Tuple[float, float]]:
+    """
+    Computes an outdoor perimeter trajectory around the building envelope.
+    Ensures evacuees who exit from any side (North, South, East, West) never
+    step back into the building interior to reach the assembly gathering zone.
+    """
+    min_x, min_y, max_x, max_y = building_bounds
+    
+    # Inset obstacle box so touching exit boundary doesn't self-collide
+    inset = 0.4
+    obs_box = (min_x + inset, min_y + inset, max_x - inset, max_y - inset)
+    
+    if not _segment_intersects_aabb(start, target, obs_box):
+        return [target]
+        
+    # 4 outer perimeter corners with clearance margin
+    p_min_x = min_x - margin
+    p_max_x = max_x + margin
+    p_min_y = min_y - margin
+    p_max_y = max_y + margin
+    
+    corners = [
+        (p_min_x, p_min_y), # 0: NW
+        (p_max_x, p_min_y), # 1: NE
+        (p_max_x, p_max_y), # 2: SE
+        (p_min_x, p_max_y), # 3: SW
+    ]
+    
+    # Determine which exterior side start is closest to
+    sx, sy = start
+    dist_west = abs(sx - min_x)
+    dist_east = abs(sx - max_x)
+    dist_north = abs(sy - min_y)
+    dist_south = abs(sy - max_y)
+    min_side_dist = min(dist_west, dist_east, dist_north, dist_south)
+    if min_side_dist == dist_west:
+        start_outer = (p_min_x, sy)
+    elif min_side_dist == dist_east:
+        start_outer = (p_max_x, sy)
+    elif min_side_dist == dist_north:
+        start_outer = (sx, p_min_y)
+    else:
+        start_outer = (sx, p_max_y)
+        
+    # Determine which exterior side target is closest to
+    tx, ty = target
+    t_dist_w = abs(tx - min_x)
+    t_dist_e = abs(tx - max_x)
+    t_dist_n = abs(ty - min_y)
+    t_dist_s = abs(ty - max_y)
+    min_t_dist = min(t_dist_w, t_dist_e, t_dist_n, t_dist_s)
+    if min_t_dist == t_dist_w:
+        target_outer = (p_min_x, ty)
+    elif min_t_dist == t_dist_e:
+        target_outer = (p_max_x, ty)
+    elif min_t_dist == t_dist_n:
+        target_outer = (tx, p_min_y)
+    else:
+        target_outer = (tx, p_max_y)
+        
+    ring_points = [start_outer] + corners + [target_outer]
+    s_idx = 0
+    t_idx = 5
+    
+    # Graph of visible outer ring segments
+    adj: Dict[int, List[Tuple[int, float]]] = {i: [] for i in range(6)}
+    for i in range(6):
+        for j in range(i + 1, 6):
+            if not _segment_intersects_aabb(ring_points[i], ring_points[j], obs_box):
+                d = math.hypot(ring_points[i][0] - ring_points[j][0], ring_points[i][1] - ring_points[j][1])
+                adj[i].append((j, d))
+                adj[j].append((i, d))
+                
+    dist = {i: float("inf") for i in range(6)}
+    prev: Dict[int, Optional[int]] = {i: None for i in range(6)}
+    dist[s_idx] = 0.0
+    pq = [(0.0, s_idx)]
+    
+    while pq:
+        d, u = heapq.heappop(pq)
+        if d > dist[u]:
+            continue
+        if u == t_idx:
+            break
+        for v, w in adj[u]:
+            if dist[u] + w < dist[v]:
+                dist[v] = dist[u] + w
+                prev[v] = u
+                heapq.heappush(pq, (dist[v], v))
+                
+    path_indices = []
+    curr = t_idx
+    while curr is not None:
+        path_indices.append(curr)
+        curr = prev[curr]
+    path_indices.reverse()
+    
+    waypoints = [ring_points[i] for i in path_indices if i != s_idx]
+    if not waypoints or waypoints[-1] != target:
+        waypoints.append(target)
+    return waypoints
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +230,9 @@ class EvacuationSimulation:
             "radius": 4.5,
             "name": "Evacuation Assembly Area"
         }
+        self.building_bounds = (min_x, min_y, max_x, max_y)
+        self.perimeter_margin = 3.0
+        self.agent_outdoor_waypoints: Dict[str, List[Tuple[float, float]]] = {}
         self.agent_assembly_spots: Dict[str, Any] = {}
         self.assembly_arrival_times: Dict[str, float] = {}
         self.assembly_counter: int = 0
@@ -170,18 +315,47 @@ class EvacuationSimulation:
         return self.agent_assembly_spots[agent_id]
 
     def _move_exited_agent_to_assembly(self, agent: AgentState, dt: float):
-        """Moves an exited agent smoothly from the building exit to their outdoor assembly muster spot."""
+        """
+        Moves an exited agent smoothly around the exterior perimeter of the building
+        to their outdoor assembly muster spot without re-entering the building.
+        """
         target_x, target_y = self._get_agent_assembly_spot(agent.id)
-        dx = target_x - agent.x
-        dy = target_y - agent.y
-        dist = math.hypot(dx, dy)
-        move_dist = agent.base_speed * dt
-        if dist <= move_dist:
+        
+        # Plan outdoor perimeter waypoints if not already planned
+        if agent.id not in self.agent_outdoor_waypoints:
+            self.agent_outdoor_waypoints[agent.id] = _plan_outdoor_perimeter_path(
+                (agent.x, agent.y),
+                (target_x, target_y),
+                self.building_bounds,
+                margin=self.perimeter_margin
+            )
+            
+        waypoints = self.agent_outdoor_waypoints[agent.id]
+        if not waypoints:
             agent.x = target_x
             agent.y = target_y
             agent.velocity = 0.0
             if agent.id not in self.assembly_arrival_times:
                 self.assembly_arrival_times[agent.id] = round(self.current_time_sec, 2)
+            return
+
+        # Navigate toward current target waypoint
+        curr_target_x, curr_target_y = waypoints[0]
+        dx = curr_target_x - agent.x
+        dy = curr_target_y - agent.y
+        dist = math.hypot(dx, dy)
+        move_dist = agent.base_speed * dt
+        
+        if dist <= move_dist:
+            agent.x = curr_target_x
+            agent.y = curr_target_y
+            waypoints.pop(0)
+            if not waypoints:
+                agent.velocity = 0.0
+                if agent.id not in self.assembly_arrival_times:
+                    self.assembly_arrival_times[agent.id] = round(self.current_time_sec, 2)
+            else:
+                agent.velocity = agent.base_speed
         else:
             agent.x += (dx / dist) * move_dist
             agent.y += (dy / dist) * move_dist

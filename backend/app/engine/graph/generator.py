@@ -167,25 +167,28 @@ class GraphGenerator:
         """
         # We implicitly built the geometric grid. Nodes labeled DOOR/EXIT act as the 
         # topological markers.
-        # We just verify there are no isolated doors/exits.
-        connected_node_ids = set()
+        # Verify doors, exits, and stairs are properly connected as traversable circulation bridges
+        node_neighbors: Dict[uuid.UUID, List[uuid.UUID]] = {n_id: [] for n_id in self.nodes}
         for e in self.edges.values():
-            connected_node_ids.add(e.source_node_id)
-            connected_node_ids.add(e.target_node_id)
-            
+            if e.source_node_id in node_neighbors:
+                node_neighbors[e.source_node_id].append(e.target_node_id)
+            if e.target_node_id in node_neighbors:
+                node_neighbors[e.target_node_id].append(e.source_node_id)
+
         for n_id, node in self.nodes.items():
             if node.node_type in ("DOOR", "EXIT", "STAIR"):
-                if n_id not in connected_node_ids:
-                    # Isolated door/exit/stair detected: connect to nearest walkable node on the same floor
+                deg = len(node_neighbors.get(n_id, []))
+                # Doors require at least 2 connections to link room <-> corridor; exits require at least 1
+                required_connections = 2 if node.node_type == "DOOR" else 1
+                if deg < required_connections:
                     candidates = [
                         (other_id, other) for other_id, other in self.nodes.items()
-                        if other.floor_number == node.floor_number and other.node_type == "WALKABLE"
+                        if other_id != n_id
+                        and other.floor_number == node.floor_number
+                        and other_id not in node_neighbors.get(n_id, [])
                     ]
-                    if candidates:
-                        closest_id, closest_node = min(
-                            candidates,
-                            key=lambda item: (item[1].x - node.x)**2 + (item[1].y - node.y)**2
-                        )
+                    candidates.sort(key=lambda item: (item[1].x - node.x)**2 + (item[1].y - node.y)**2)
+                    for closest_id, closest_node in candidates[:4]:
                         dist = math.hypot(closest_node.x - node.x, closest_node.y - node.y)
                         if dist <= 3.5:
                             e_id = _deterministic_edge_id(self.topology_id, n_id, closest_id)
@@ -200,7 +203,11 @@ class GraphGenerator:
                                     bidirectional=True,
                                     base_traversal_time=dist / 1.0
                                 )
-                                connected_node_ids.add(n_id) 
+                                node_neighbors[n_id].append(closest_id)
+                                if closest_id in node_neighbors:
+                                    node_neighbors[closest_id].append(n_id)
+                                if len(node_neighbors[n_id]) >= required_connections:
+                                    break 
 
     def _stage_6_and_7_vertical_connections(self):
         """Connect stairs vertically across floors with spatial alignment tolerance."""
