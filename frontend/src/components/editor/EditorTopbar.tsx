@@ -1,7 +1,8 @@
 "use client";
 
 import { useEditorStore } from "@/store/editorStore";
-import { Layers, Magnet, Save, Play, Loader2, Sparkles, Wand2, Trophy, Plus, Copy, Trash2, Building, Users } from "lucide-react";
+import { Layers, Magnet, Save, Play, Loader2, Sparkles, Wand2, Trophy, Plus, Copy, Trash2, Building, Users, FolderOpen } from "lucide-react";
+import { SavedBuildingsModal } from "./SavedBuildingsModal";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { saveBuilding, generateGraph, digitizeBlueprint } from "@/lib/api/client";
@@ -27,6 +28,7 @@ export function EditorTopbar() {
   const [isSaving, setIsSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDigitizing, setIsDigitizing] = useState(false);
+  const [isBuildingsModalOpen, setIsBuildingsModalOpen] = useState(false);
 
   const handleAutoDigitize = async (file: File) => {
     setIsDigitizing(true);
@@ -112,6 +114,16 @@ export function EditorTopbar() {
     <div className="h-14 bg-white border-b border-slate-200 flex items-center justify-between px-4 shrink-0 shadow-sm z-10">
       <div className="flex items-center space-x-4">
         <input type="text" value={buildingName} onChange={(e) => setBuildingInfo(buildingId || "", e.target.value)} className="font-semibold text-slate-800 text-sm border border-transparent hover:border-slate-300 focus:border-blue-500 focus:outline-none bg-slate-50 px-2 py-1 rounded transition-colors" placeholder="Building Name..." title="Click to rename building" />
+        
+        {/* Saved Buildings Library Manager */}
+        <button
+          onClick={() => setIsBuildingsModalOpen(true)}
+          className="flex items-center px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-lg border border-indigo-200 transition-colors shadow-2xs cursor-pointer active:scale-95 shrink-0"
+          title="Open Saved Buildings Library & Pre-Configured Demo Templates"
+        >
+          <FolderOpen size={14} className="mr-1.5 text-indigo-600" />
+          <span>Saved Buildings</span>
+        </button>
         {/* Multi-Floor Management Suite */}
         <div className="flex items-center space-x-1.5">
           <div className="flex items-center text-slate-700 bg-slate-100 rounded-md px-3 py-1.5 border border-slate-200">
@@ -431,6 +443,12 @@ export function EditorTopbar() {
           Scenarios Race
         </button>
       </div>
+
+      {/* Saved Buildings Library Modal */}
+      <SavedBuildingsModal
+        isOpen={isBuildingsModalOpen}
+        onClose={() => setIsBuildingsModalOpen(false)}
+      />
     </div>
   );
 }

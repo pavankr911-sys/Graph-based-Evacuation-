@@ -10,6 +10,7 @@ interface EditorState {
   buildingName: string;
   setBuildingInfo: (id: string, name: string) => void;
   loadState: (floors: Floor[], elements: EditorElement[]) => void;
+  newBuilding: () => void;
 
   
   // History & Elements
@@ -252,8 +253,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     history: [elements],
     historyIndex: 0,
     selectedElementId: null,
-    graph: null
+    graph: null,
+    simulationRun: null
   }),
+  newBuilding: () => {
+    const newFloorId = uuidv4();
+    set({
+      buildingId: uuidv4(),
+      buildingName: "Untitled Building",
+      floors: [{ id: newFloorId, floor_number: 0, name: "Ground Floor", grid_resolution: 0.5 }],
+      activeFloorId: newFloorId,
+      history: [[]],
+      historyIndex: 0,
+      selectedElementId: null,
+      graph: null,
+      simulationRun: null,
+      blueprintImage: null,
+      blueprintImagesByFloor: {},
+      blueprintOpacitiesByFloor: {}
+    });
+  },
   
   setGraph: (graph) => set({ graph, selectedGraphNodeId: null, selectedGraphEdgeId: null, showGraphOverlay: true }),
   setSelectedGraphNodeId: (id) => set({ selectedGraphNodeId: id, selectedGraphEdgeId: null, selectedElementId: null }),
