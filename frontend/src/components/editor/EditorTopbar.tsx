@@ -2,11 +2,11 @@
 
 import { useEditorStore } from "@/store/editorStore";
 import { 
-  Building, Plus, Copy, Trash2, Wand2, Upload, Eye, EyeOff, 
-  Magnet, Save, Play, Loader2, Trophy, Users, ChevronDown, Check, Swords
+  Building, Plus, Copy, Trash2, Wand2, Upload, X,
+  Magnet, Save, Play, Loader2, Trophy, Users
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 import { saveBuilding, generateGraph, digitizeBlueprint } from "@/lib/api/client";
 import { v4 as uuidv4 } from "uuid";
 
@@ -32,20 +32,6 @@ export function EditorTopbar() {
   const [isDigitizing, setIsDigitizing] = useState(false);
   const [isRunningRace, setIsRunningRace] = useState(false);
   const [raceStatusText, setRaceStatusText] = useState("");
-  const [isBlueprintMenuOpen, setIsBlueprintMenuOpen] = useState(false);
-
-  const blueprintMenuRef = useRef<HTMLDivElement>(null);
-
-  // Close blueprint popover when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (blueprintMenuRef.current && !blueprintMenuRef.current.contains(e.target as Node)) {
-        setIsBlueprintMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
   const handleAutoDigitize = async (file: File) => {
     setIsDigitizing(true);
@@ -77,7 +63,7 @@ export function EditorTopbar() {
 
       if (newElements.length > 0) {
         addElements(newElements);
-        alert(`Auto-Digitization Complete for ${floorTitle}!\nExtracted ${result.walls.length} walls and ${result.rooms.length} rooms.\nClick '3D' to view in your Multi-Story Digital Twin!`);
+        alert(`Auto-Digitization Complete for ${floorTitle}!\nExtracted ${result.walls.length} walls and ${result.rooms.length} rooms.\nClick '3D View' to see your Digital Twin!`);
       } else {
         alert("No clear walls or rooms could be detected in this image. Try an image with higher contrast or clear black lines.");
       }
@@ -85,7 +71,6 @@ export function EditorTopbar() {
       alert(`Digitization error: ${e.message}`);
     } finally {
       setIsDigitizing(false);
-      setIsBlueprintMenuOpen(false);
     }
   };
 
@@ -262,7 +247,7 @@ export function EditorTopbar() {
           type="text" 
           value={buildingName} 
           onChange={(e) => setBuildingInfo(buildingId || "", e.target.value)} 
-          className="font-bold text-slate-800 text-xs border border-transparent hover:border-slate-300 focus:border-indigo-500 focus:outline-none bg-slate-50 px-2.5 py-1.5 rounded-lg w-32 sm:w-40 transition-colors" 
+          className="font-bold text-slate-800 text-xs border border-transparent hover:border-slate-300 focus:border-indigo-500 focus:outline-none bg-slate-50 px-2.5 py-1.5 rounded-lg w-28 sm:w-36 transition-colors" 
           placeholder="Building Name..." 
           title="Click to rename building" 
         />
@@ -328,113 +313,104 @@ export function EditorTopbar() {
         </div>
       </div>
       
-      {/* 2. Middle Cluster: Blueprint Tools, 2D/3D, Snap, Save, Graph */}
+      {/* 2. Middle Cluster: Direct 1-Click Blueprint Tools & View Modes */}
       <div className="flex items-center space-x-1.5 shrink-0">
-        {/* Compact Blueprint & CAD Popover Menu (Saves 350px of horizontal topbar space!) */}
-        <div className="relative" ref={blueprintMenuRef}>
-          <button
-            onClick={() => setIsBlueprintMenuOpen(!isBlueprintMenuOpen)}
-            className={`flex items-center space-x-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
-              activeBlueprint 
-                ? "bg-purple-50 text-purple-700 border-purple-300 shadow-2xs" 
-                : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-            }`}
-            title="Blueprint & CAD Sketch Tools"
-          >
-            <Wand2 size={13} className={activeBlueprint ? "text-purple-600" : "text-slate-500"} />
-            <span>Blueprint</span>
-            {activeBlueprint && <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />}
-            <ChevronDown size={12} className="text-slate-400 ml-0.5" />
-          </button>
-
-          {isBlueprintMenuOpen && (
-            <div className="absolute top-full left-0 mt-1.5 w-64 bg-white rounded-xl shadow-2xl border border-slate-200 p-3 z-50 flex flex-col space-y-2.5 animate-in fade-in slide-in-from-top-1">
-              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-100 pb-1.5">
-                Level {activeFloorNumber} Blueprint Tools
-              </div>
-
-              {/* ⚡ Auto-Digitize (OpenCV Vision) */}
-              <label 
-                className={`flex items-center justify-center space-x-1.5 px-3 py-2 rounded-lg text-xs font-bold text-white transition-all cursor-pointer shadow-xs ${
-                  isDigitizing
-                    ? "bg-purple-400 cursor-not-allowed"
-                    : "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
-                }`}
-              >
-                {isDigitizing ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    <span>Analyzing Image...</span>
-                  </>
-                ) : (
-                  <>
-                    <Wand2 size={14} />
-                    <span>⚡ Auto-Digitize Blueprint</span>
-                  </>
-                )}
-                <input 
-                  type="file" 
-                  accept="image/*" 
-                  className="hidden" 
-                  disabled={isDigitizing}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      handleAutoDigitize(file);
-                      e.target.value = "";
-                    }
-                  }}
-                />
-              </label>
-
-              {/* Reference Upload */}
-              <label className="flex items-center justify-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer transition-colors">
-                <Upload size={13} className="text-slate-500" />
-                <span>Upload Sketch Image</span>
-                <input 
-                  type="file" 
-                  accept="image/*" 
-                  className="hidden" 
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    const targetFloorId = activeFloorId || floors[0]?.id;
-                    if (file && targetFloorId) {
-                      const reader = new FileReader();
-                      reader.onload = (ev) => {
-                        if (ev.target?.result) {
-                          setFloorBlueprint(targetFloorId, ev.target.result as string);
-                          setFloorBlueprintOpacity(targetFloorId, 0.4);
-                        }
-                      };
-                      reader.readAsDataURL(file);
-                    }
-                    setIsBlueprintMenuOpen(false);
-                  }}
-                />
-              </label>
-
-              {/* Opacity Slider */}
-              {activeBlueprint && (
-                <div className="pt-1.5 border-t border-slate-100">
-                  <div className="flex justify-between text-[10px] text-slate-500 mb-1 font-semibold">
-                    <span>Opacity</span>
-                    <span>{Math.round((activeBlueprintOpacity || 0.4) * 100)}%</span>
-                  </div>
-                  <input 
-                    type="range" min="0" max="1" step="0.05" 
-                    value={activeBlueprintOpacity !== undefined ? activeBlueprintOpacity : 0.4} 
-                    onChange={(e) => {
-                      if (activeFloorId) {
-                        setFloorBlueprintOpacity(activeFloorId, parseFloat(e.target.value));
-                      }
-                    }}
-                    className="w-full h-1.5 bg-slate-200 rounded-lg cursor-pointer"
-                  />
-                </div>
-              )}
-            </div>
+        
+        {/* Direct Button 1: ⚡ Auto-Digitize Blueprint (OpenCV Vision) */}
+        <label 
+          className={`flex items-center px-2.5 py-1.5 rounded-lg text-xs font-bold transition-all border cursor-pointer shadow-2xs ${
+            isDigitizing
+              ? "bg-purple-100 text-purple-700 border-purple-300 animate-pulse"
+              : "bg-gradient-to-r from-purple-50 to-indigo-50 text-indigo-700 border-indigo-200 hover:border-indigo-400 hover:shadow-xs"
+          }`}
+          title="Click to select a CAD sketch or floorplan image to automatically extract walls & rooms using OpenCV AI Vision"
+        >
+          {isDigitizing ? (
+            <>
+              <Loader2 size={13} className="mr-1.5 animate-spin text-purple-600" />
+              <span>Digitizing...</span>
+            </>
+          ) : (
+            <>
+              <Wand2 size={13} className="mr-1.5 text-indigo-600" />
+              <span>⚡ Auto-Digitize</span>
+            </>
           )}
-        </div>
+          <input 
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            disabled={isDigitizing}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                handleAutoDigitize(file);
+                e.target.value = "";
+              }
+            }}
+          />
+        </label>
+
+        {/* Direct Button 2: Upload Reference Blueprint */}
+        <label 
+          className="flex items-center px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 cursor-pointer shadow-2xs transition-colors"
+          title="Upload a background blueprint sketch to draw on top of for this floor"
+        >
+          <Upload size={13} className="mr-1.5 text-slate-500" />
+          <span>Upload Blueprint</span>
+          <input 
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              const targetFloorId = activeFloorId || floors[0]?.id;
+              if (file && targetFloorId) {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                  if (ev.target?.result) {
+                    setFloorBlueprint(targetFloorId, ev.target.result as string);
+                    setFloorBlueprintOpacity(targetFloorId, 0.4);
+                  }
+                };
+                reader.readAsDataURL(file);
+                e.target.value = "";
+              }
+            }}
+          />
+        </label>
+
+        {/* Blueprint Opacity Control (Only shown when active blueprint exists on this floor) */}
+        {activeBlueprint && (
+          <div className="flex items-center space-x-1.5 bg-purple-50/80 px-2 py-1 rounded-lg border border-purple-200 text-xs">
+            <span className="text-[10px] font-bold text-purple-700">Opacity:</span>
+            <input 
+              type="range" min="0" max="1" step="0.05" 
+              value={activeBlueprintOpacity !== undefined ? activeBlueprintOpacity : 0.4} 
+              onChange={(e) => {
+                if (activeFloorId) {
+                  setFloorBlueprintOpacity(activeFloorId, parseFloat(e.target.value));
+                }
+              }}
+              className="w-14 h-1 bg-purple-200 rounded-lg cursor-pointer"
+              title="Adjust blueprint background opacity"
+            />
+            <span className="text-[10px] font-mono font-bold text-purple-700 w-6">
+              {Math.round((activeBlueprintOpacity || 0.4) * 100)}%
+            </span>
+            <button
+              onClick={() => {
+                if (activeFloorId) {
+                  setFloorBlueprint(activeFloorId, null);
+                }
+              }}
+              className="p-0.5 text-slate-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+              title="Clear blueprint reference"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
 
         {/* 2D / 3D Mode Toggle */}
         <button 
