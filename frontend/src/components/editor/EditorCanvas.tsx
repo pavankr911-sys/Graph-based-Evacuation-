@@ -4,7 +4,7 @@ import { useEditorStore } from "@/store/editorStore";
 import { Point, EditorElement, Room, Wall, Door, Stair, Exit } from "@/lib/editor/types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { Flame, Trash2, ListStart } from "lucide-react";
+import { Flame, Trash2, ListStart, ZoomIn, ZoomOut, Maximize2, RotateCcw } from "lucide-react";
 
 export function EditorCanvas() {
   const { 
@@ -152,12 +152,14 @@ export function EditorCanvas() {
   }, [showGraphOverlay, graph?.nodes, activeFloorNumber, selectedGraphNodeId]);
 
   
+  const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   
   // Viewport state
-  const [zoom, setZoom] = useState(20); // pixels per meter
+  const [zoom, setZoom] = useState(20); // pixels per meter (20px = 1m)
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  const [isSpacePressed, setIsSpacePressed] = useState(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
 
   // Drawing state
@@ -181,9 +183,180 @@ export function EditorCanvas() {
     return { x: rawX, y: rawY };
   };
 
-  // Keyboard shortcuts
+  // Zoom by step (used for UI buttons and keyboard shortcuts, centered on canvas)
+  const zoomIn = useCallback(() => {
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+
+    setZoom((prevZoom) => {
+      const nextZoom = Math.min(160, prevZoom * 1.25);
+      if (nextZoom === prevZoom) return prevZoom;
+      setPan((prevPan) => ({
+        x: cx - (cx - prevPan.x) * (nextZoom / prevZoom),
+        y: cy - (cy - prevPan.y) * (nextZoom / prevZoom),
+      }));
+      return nextZoom;
+    });
+  }, []);
+
+  const zoomOut = useCallback(() => {
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+
+    setZoom((prevZoom) => {
+      const nextZoom = Math.max(4, prevZoom * 0.8);
+      if (nextZoom === prevZoom) return prevZoom;
+      setPan((prevPan) => ({
+        x: cx - (cx - prevPan.x) * (nextZoom / prevZoom),
+        y: cy - (cy - prevPan.y) * (nextZoom / prevZoom),
+      }));
+      return nextZoom;
+    });
+  }, []);
+
+  const resetZoom = useCallback(() => {
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const targetZoom = 20; // 20px/m standard
+
+    setZoom((prevZoom) => {
+      setPan((prevPan) => ({
+        x: cx - (cx - prevPan.x) * (targetZoom / prevZoom),
+        y: cy - (cy - prevPan.y) * (targetZoom / prevZoom),
+      }));
+      return targetZoom;
+    });
+  }, []);
+
+  const fitFloorplan = useCallback(() => {
+    if (!svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+
+    const floorEls = elements;
+    if (floorEls.length === 0) {
+      setZoom(20);
+      setPan({ x: rect.width / 4, y: rect.height / 4 });
+      return;
+    }
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const el of floorEls) {
+      if (el.type === "WALL") {
+        const w = el as Wall;
+        minX = Math.min(minX, w.start_x, w.end_x);
+        maxX = Math.max(maxX, w.start_x, w.end_x);
+        minY = Math.min(minY, w.start_y, w.end_y);
+        maxY = Math.max(maxY, w.start_y, w.end_y);
+      } else if (el.type === "ROOM") {
+        const r = el as Room;
+        for (const pt of (r.geometry?.coordinates || [])) {
+          minX = Math.min(minX, pt.x);
+          maxX = Math.max(maxX, pt.x);
+          minY = Math.min(minY, pt.y);
+          maxY = Math.max(maxY, pt.y);
+        }
+      } else if ("position_x" in el && "position_y" in el) {
+        const ptEl = el as any;
+        minX = Math.min(minX, ptEl.position_x);
+        maxX = Math.max(maxX, ptEl.position_x);
+        minY = Math.min(minY, ptEl.position_y);
+        maxY = Math.max(maxY, ptEl.position_y);
+      }
+    }
+
+    if (minX === Infinity || maxX === -Infinity) {
+      setZoom(20);
+      setPan({ x: rect.width / 4, y: rect.height / 4 });
+      return;
+    }
+
+    const padding = 70; // margin in px
+    const spanX = Math.max(4, maxX - minX);
+    const spanY = Math.max(4, maxY - minY);
+    const availW = Math.max(100, rect.width - padding * 2);
+    const availH = Math.max(100, rect.height - padding * 2);
+
+    const targetZoom = Math.max(4, Math.min(100, Math.min(availW / spanX, availH / spanY)));
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    setZoom(targetZoom);
+    setPan({
+      x: rect.width / 2 - centerX * targetZoom,
+      y: rect.height / 2 - centerY * targetZoom,
+    });
+  }, [elements]);
+
+  // Non-passive native wheel listener: direct cursor-centric zoom with trackpad pinch support
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const onWheel = (e: WheelEvent) => {
+      // Prevent entire browser page zooming or scrolling
+      e.preventDefault();
+
+      const rect = el.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      let zoomFactor: number;
+      if (Math.abs(e.deltaY) < 35) {
+        // Continuous precision wheel or trackpad pinch
+        zoomFactor = Math.pow(0.992, e.deltaY);
+      } else {
+        // Discrete mouse wheel notch (Wheel up = zoom in, Wheel down = zoom out)
+        zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+      }
+
+      setZoom((prevZoom) => {
+        const nextZoom = Math.max(4, Math.min(160, prevZoom * zoomFactor));
+        if (Math.abs(nextZoom - prevZoom) < 0.001) return prevZoom;
+
+        setPan((prevPan) => {
+          const nextPanX = mouseX - (mouseX - prevPan.x) * (nextZoom / prevZoom);
+          const nextPanY = mouseY - (mouseY - prevPan.y) * (nextZoom / prevZoom);
+          return { x: nextPanX, y: nextPanY };
+        });
+
+        return nextZoom;
+      });
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+    };
+  }, []);
+
+  // Keyboard shortcuts (tools, undo/redo, zoom +/-, fit 0, spacebar pan)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const isInput = (e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "TEXTAREA";
+      if (isInput) return;
+
+      if (e.code === "Space" && !e.repeat) {
+        setIsSpacePressed(true);
+      }
+      if (e.key === "+" || e.key === "=") {
+        e.preventDefault();
+        zoomIn();
+      }
+      if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        zoomOut();
+      }
+      if (e.key === "0") {
+        e.preventDefault();
+        fitFloorplan();
+      }
       if (e.key === "Escape") {
         setIsDrawing(false);
         setCurrentPoints([]);
@@ -209,9 +382,20 @@ export function EditorCanvas() {
         }
       }
     };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        setIsSpacePressed(false);
+      }
+    };
+
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [undo, redo, setActiveTool, graph, setSelectedGraphNodeId, setSelectedGraphEdgeId, selectedGraphNodeId, selectedGraphEdgeId]);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [undo, redo, setActiveTool, graph, setSelectedGraphNodeId, setSelectedGraphEdgeId, selectedGraphNodeId, selectedGraphEdgeId, zoomIn, zoomOut, fitFloorplan]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     // Prevent element placement or canvas actions when clicking on UI buttons or overlays
@@ -220,7 +404,8 @@ export function EditorCanvas() {
       return;
     }
 
-    if (e.button === 1 || (e.button === 0 && e.altKey)) { // Middle click or Alt+Left for pan
+    // Middle click (1), Right click (2), or Left click with Alt / Space starts pan
+    if (e.button === 1 || e.button === 2 || (e.button === 0 && (e.altKey || isSpacePressed))) {
       setIsPanning(true);
       setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
       return;
@@ -328,26 +513,7 @@ export function EditorCanvas() {
     }
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
-    if (e.ctrlKey) {
-      e.preventDefault();
-      const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-      const newZoom = Math.max(5, Math.min(100, zoom * zoomFactor));
-      
-      // Keep mouse position fixed while zooming
-      if (svgRef.current) {
-        const rect = svgRef.current.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
-        
-        const newPanX = mouseX - (mouseX - pan.x) * (newZoom / zoom);
-        const newPanY = mouseY - (mouseY - pan.y) * (newZoom / zoom);
-        
-        setPan({ x: newPanX, y: newPanY });
-      }
-      setZoom(newZoom);
-    }
-  };
+
 
   const handleElementClick = (e: React.MouseEvent, id: string) => {
     if (activeTool === "SELECT") {
@@ -357,14 +523,24 @@ export function EditorCanvas() {
   };
 
   return (
-    <div className="flex-1 bg-slate-50 relative overflow-hidden" 
-         onPointerDown={handlePointerDown} 
-         onPointerMove={handlePointerMove} 
-         onPointerUp={handlePointerUp}
-         onWheel={handleWheel}
-         style={{ touchAction: 'none' }}>
+    <div 
+      ref={containerRef}
+      className={`flex-1 bg-slate-50 relative overflow-hidden select-none ${
+        isPanning ? "cursor-grabbing" : isSpacePressed ? "cursor-grab" : ""
+      }`} 
+      onPointerDown={handlePointerDown} 
+      onPointerMove={handlePointerMove} 
+      onPointerUp={handlePointerUp}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{ touchAction: 'none' }}
+    >
       
-      <svg ref={svgRef} className="w-full h-full cursor-crosshair">
+      <svg 
+        ref={svgRef} 
+        className={`w-full h-full ${
+          isPanning ? "cursor-grabbing" : isSpacePressed ? "cursor-grab" : activeTool === "SELECT" ? "cursor-default" : activeTool === "HAZARD" ? "cursor-pointer" : "cursor-crosshair"
+        }`}
+      >
         <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
           {/* Grid */}
           <g className="text-slate-200 stroke-current stroke-[0.05]">
@@ -1014,9 +1190,68 @@ export function EditorCanvas() {
         </div>
       )}
 
+      {/* Floating 2D Zoom & Navigation Controls */}
+      <div 
+        data-no-canvas-click="true"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        className="absolute bottom-4 right-4 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 text-white rounded-xl shadow-2xl p-2 z-20 flex items-center space-x-1.5 select-none animate-in fade-in slide-in-from-bottom-2"
+      >
+        <button
+          onClick={zoomIn}
+          className="p-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 hover:text-white rounded-lg flex items-center justify-center transition-all cursor-pointer border border-slate-700/60"
+          title="Zoom In (+ or =)"
+        >
+          <ZoomIn size={16} />
+        </button>
+
+        <button
+          onClick={zoomOut}
+          className="p-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 hover:text-white rounded-lg flex items-center justify-center transition-all cursor-pointer border border-slate-700/60"
+          title="Zoom Out (-)"
+        >
+          <ZoomOut size={16} />
+        </button>
+
+        {/* Zoom Percentage Badge (Click to reset to 100%) */}
+        <button
+          onClick={resetZoom}
+          className="px-2.5 py-1 bg-slate-800/90 hover:bg-slate-700 text-xs font-mono font-bold text-slate-300 hover:text-white rounded-lg border border-slate-700/60 transition-all cursor-pointer"
+          title="Current zoom scale. Click to reset to 100% (20px/m)"
+        >
+          {Math.round((zoom / 20) * 100)}%
+        </button>
+
+        <div className="w-px h-5 bg-slate-700 mx-0.5" />
+
+        <button
+          onClick={fitFloorplan}
+          className="p-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 hover:text-white rounded-lg flex items-center justify-center transition-all cursor-pointer border border-slate-700/60"
+          title="Fit Floorplan to View (0)"
+        >
+          <Maximize2 size={16} />
+        </button>
+
+        <button
+          onClick={resetZoom}
+          className="p-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 hover:text-white rounded-lg flex items-center justify-center transition-all cursor-pointer border border-slate-700/60"
+          title="Reset Zoom & Pan (100%)"
+        >
+          <RotateCcw size={15} />
+        </button>
+      </div>
+
       {/* HUD Info */}
-      <div data-no-canvas-click="true" onPointerDown={(e) => e.stopPropagation()} className="absolute bottom-4 left-4 bg-white/80 backdrop-blur-sm px-3 py-1.5 rounded-md shadow-sm border border-slate-200 text-xs text-slate-600 font-mono select-none">
-        X: {mousePos.x.toFixed(1)}m | Y: {mousePos.y.toFixed(1)}m | Zoom: {zoom.toFixed(1)}
+      <div 
+        data-no-canvas-click="true" 
+        onPointerDown={(e) => e.stopPropagation()} 
+        className="absolute bottom-4 left-4 bg-slate-900/85 backdrop-blur-md px-3.5 py-2 rounded-xl shadow-lg border border-slate-700/70 text-xs text-slate-300 font-mono select-none flex items-center space-x-3 z-10"
+      >
+        <span>X: <strong className="text-white">{mousePos.x.toFixed(1)}m</strong> | Y: <strong className="text-white">{mousePos.y.toFixed(1)}m</strong></span>
+        <span className="text-slate-500">•</span>
+        <span className="text-slate-400">Scale: <strong className="text-indigo-300">{zoom.toFixed(1)} px/m</strong> ({Math.round((zoom / 20) * 100)}%)</span>
+        <span className="hidden md:inline text-slate-500">•</span>
+        <span className="hidden md:inline text-[11px] text-slate-400">Scroll to zoom • Right-click or Space+drag to pan</span>
       </div>
     </div>
   );
