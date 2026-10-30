@@ -1,9 +1,17 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone
 
 from app.core.config import settings
+from app.core.database import init_db
 from app.api.v1.api import api_router
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Automatically initialize tables on startup so team members can run immediately with zero setup
+    await init_db()
+    yield
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -12,6 +20,7 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url=f"{settings.API_V1_STR}/docs",
     redoc_url=f"{settings.API_V1_STR}/redoc",
+    lifespan=lifespan,
 )
 
 # Set CORS middleware
