@@ -1,7 +1,7 @@
 "use client";
 
 import { useEditorStore } from "@/store/editorStore";
-import { Layers, Magnet, Save, Play, Loader2, Sparkles, Wand2, Trophy, Plus, Copy, Trash2, Building, Users, FolderOpen } from "lucide-react";
+import { Layers, Save, Play, Loader2, Sparkles, Wand2, Trophy, Plus, Copy, Trash2, Building, Users, FolderOpen } from "lucide-react";
 import { SavedBuildingsModal } from "./SavedBuildingsModal";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -11,15 +11,14 @@ import { v4 as uuidv4 } from "uuid";
 export function EditorTopbar() {
   const router = useRouter();
   const { 
-    floors, activeFloorId, setActiveFloor, gridSnapping, setGridSnapping,
+    floors, activeFloorId, setActiveFloor,
     buildingId, buildingName, setBuildingInfo, getCurrentElements, setGraph,
     is3DMode, setIs3DMode, graph, showGraphOverlay, setShowGraphOverlay, 
     blueprintImage, blueprintOpacity, setBlueprintImage, setBlueprintOpacity,
     addElements, addFloor, deleteFloor, renameFloor, duplicateFloorStructure,
     setFloorBlueprint, setFloorBlueprintOpacity, getActiveBlueprint, getActiveBlueprintOpacity,
     simulationOccupantCount, setSimulationOccupantCount,
-    hazardSpreadRate, setHazardSpreadRate,
-    showOccupantLegend, setShowOccupantLegend
+    hazardSpreadRate, setHazardSpreadRate
   } = useEditorStore();
 
   const activeFloor = floors.find((f) => f.id === activeFloorId);
@@ -304,32 +303,6 @@ export function EditorTopbar() {
           title="Toggle 3D View"
         >
           {is3DMode ? "2D" : "3D"}
-        </button>
-        
-        <button 
-          onClick={() => setGridSnapping(!gridSnapping)}
-          className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
-            gridSnapping 
-              ? "bg-blue-50 text-blue-700 border-blue-200" 
-              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-          }`}
-          title="Toggle Grid Snapping"
-        >
-          <Magnet size={16} className="mr-2" />
-          Snap
-        </button>
-
-        <button 
-          onClick={() => setShowOccupantLegend(!showOccupantLegend)}
-          className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
-            showOccupantLegend 
-              ? "bg-indigo-50 text-indigo-700 border-indigo-200" 
-              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-          }`}
-          title="Toggle Evacuee Legend & Demographics"
-        >
-          <Users size={16} className={`mr-1.5 ${showOccupantLegend ? "text-indigo-600" : "text-slate-500"}`} />
-          Legend
         </button>
         
         <button 
