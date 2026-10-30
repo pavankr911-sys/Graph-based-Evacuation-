@@ -65,6 +65,21 @@ class Navigator:
             if count > 0 and uid in self.node_to_idx
         }
         
+        # Determine exit queue / door congestion penalties for load-aware algorithms
+        exit_queue_penalties: Dict[int, float] = {}
+        if algo in ["ALGO_C", "ALGO_D"] and occ_dict:
+            for ex in self.exit_indices:
+                ex_node = self.idx_to_node[ex]
+                # Count agents within 6m queue radius of this exit door
+                queue_count = sum(
+                    count for n_idx, count in occ_dict.items()
+                    if (self.idx_to_node[n_idx].floor_number == ex_node.floor_number and
+                        (self.idx_to_node[n_idx].x - ex_node.x)**2 + (self.idx_to_node[n_idx].y - ex_node.y)**2 <= 36.0)
+                )
+                if queue_count > 1:
+                    # Delay penalty equivalent to distance (e.g. 8m equivalent per queued person)
+                    exit_queue_penalties[ex] = (queue_count - 1) * 8.0
+        
         # Reset distance, parent & target exit arrays
         dist = [float("inf")] * self.N
         parent: List[Optional[int]] = [None] * self.N
@@ -72,9 +87,10 @@ class Navigator:
         pq: List[Tuple[float, int]] = []
         
         for ex in self.exit_indices:
-            dist[ex] = 0.0
+            base_cost = exit_queue_penalties.get(ex, 0.0)
+            dist[ex] = base_cost
             target_exit[ex] = ex
-            heapq.heappush(pq, (0.0, ex))
+            heapq.heappush(pq, (base_cost, ex))
             
         # Pre-cache hazard values if hazard engine exists
         hazard_cache: Dict[int, float] = {}
@@ -98,16 +114,28 @@ class Navigator:
             
             for v, edge_length, edge_capacity in adj[u]:
                 h_int = hazard_cache.get(v, 0.0)
-                if h_int >= 0.8:
-                    continue  # Impassable fatal fire
-                    
-                penalty = 0.0
-                if algo == "ALGO_B":
-                    penalty = h_int * 100.0
+                
+                # Distinct algorithmic penalty & hazard awareness
+                if algo == "ALGO_A":
+                    # Baseline Dijkstra: blind to hazards and queue bottlenecks
+                    penalty = 0.0
+                elif algo == "ALGO_B":
+                    # Safety-first: strictly circumvents smoke and fatal fire
+                    if h_int >= 0.65:
+                        continue
+                    penalty = h_int * 160.0
                 elif algo == "ALGO_C":
-                    penalty = (u_occ / edge_capacity) * 2.0
+                    # Load-aware: dynamically avoids door and corridor congestion
+                    if h_int >= 0.8:
+                        continue
+                    penalty = (h_int * 25.0) + ((u_occ / edge_capacity) * 4.0)
                 elif algo == "ALGO_D":
-                    penalty = (h_int * 200.0) + ((u_occ / edge_capacity) * 5.0)
+                    # Predictive Multi-Hazard: joint proactive fire avoidance & multi-exit balancing
+                    if h_int >= 0.55:
+                        continue
+                    penalty = (h_int * 250.0) + ((u_occ / edge_capacity) * 8.0)
+                else:
+                    penalty = 0.0
                     
                 new_cost = d + edge_length + penalty
                 if new_cost < dist[v]:

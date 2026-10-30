@@ -149,6 +149,25 @@ async def compare_simulations(
 
     topology_with_elements = await ensure_building_topology(db, building_id)
     
+    # Auto-detect or provide realistic fire ignition nodes for the comparative benchmark race
+    hazard_nodes = list(config.hazard_ignition_nodes)
+    if not hazard_nodes:
+        # 1. Check if building has saved HAZARD elements
+        saved_hazards = [n for n in topology_with_elements.nodes if n.node_type == "HAZARD_POINT"]
+        if saved_hazards:
+            hazard_nodes = [str(n.id) for n in saved_hazards]
+        else:
+            # 2. Automatically select central corridor/room node away from exits for authentic fire benchmark
+            walkable = [n for n in topology_with_elements.nodes if n.node_type in ["WALKABLE", "CORRIDOR", "ROOM"]]
+            exits = [n for n in topology_with_elements.nodes if n.node_type == "EXIT"]
+            if walkable and exits:
+                candidates = [
+                    n for n in walkable 
+                    if all((n.x - ex.x)**2 + (n.y - ex.y)**2 >= 36.0 for ex in exits if ex.floor_number == n.floor_number)
+                ]
+                chosen = candidates[len(candidates) // 2] if candidates else walkable[len(walkable) // 2]
+                hazard_nodes = [str(chosen.id)]
+    
     # Generate identical initial agent pool for completely fair scientific benchmark
     shared_agents = EvacuationSimulation.generate_shared_agents(topology_with_elements, config.occupant_count)
     
@@ -158,9 +177,9 @@ async def compare_simulations(
         algo_config = SimulationConfigCreate(
             occupant_count=config.occupant_count,
             tick_rate_hz=config.tick_rate_hz,
-            max_time_sec=config.max_time_sec,
-            hazard_ignition_nodes=config.hazard_ignition_nodes,
-            hazard_spread_rate=config.hazard_spread_rate,
+            max_time_sec=max(config.max_time_sec, 90.0),
+            hazard_ignition_nodes=hazard_nodes,
+            hazard_spread_rate=config.hazard_spread_rate or 0.15,
             routing_algorithm=algo_code
         )
         

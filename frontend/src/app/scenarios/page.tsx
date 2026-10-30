@@ -34,9 +34,9 @@ function ScenariosContent() {
   // Form Parameters
   const [selectedBuilding, setSelectedBuilding] = useState<string>("");
   const [algorithm, setAlgorithm] = useState("ALGO_D");
-  const [occupants, setOccupants] = useState(20);
-  const [hazardSpread, setHazardSpread] = useState(0.05);
-  const [maxTimeSec, setMaxTimeSec] = useState(60);
+  const [occupants, setOccupants] = useState(25);
+  const [hazardSpread, setHazardSpread] = useState(0.15);
+  const [maxTimeSec, setMaxTimeSec] = useState(120);
 
   useEffect(() => {
     async function fetchBuildings() {

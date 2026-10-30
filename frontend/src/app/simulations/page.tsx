@@ -90,7 +90,7 @@ export default function SimulationsPage() {
   // Pre-calculate max values for comparison charts
   const metricsList = comparison ? Object.values(comparison.metrics) : [];
   const maxEvacTime = metricsList.length > 0 ? Math.max(...metricsList.map(m => m.total_evacuation_time), 1) : 100;
-  const maxOccupants = comparison ? comparison.occupant_count : 20;
+  const maxOccupants = comparison ? Math.max(comparison.occupant_count, ...metricsList.map(m => m.evacuated_count), 1) : 20;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-12">
@@ -217,25 +217,47 @@ export default function SimulationsPage() {
                     <BarChart3 size={16} className="mr-2 text-blue-600" />
                     Total Evacuation Time (TET)
                   </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">Lower time is better. Highlights routing efficiency.</p>
+                  <p className="text-xs text-slate-500 mt-0.5">Lower time is better. Highlights algorithmic routing efficiency.</p>
                 </div>
               </div>
 
-              <div className="space-y-3 pt-2">
+              <div className="space-y-3.5 pt-2">
                 {metricsList.map((m) => {
-                  const widthPct = Math.max(15, Math.min(100, (m.total_evacuation_time / maxEvacTime) * 100));
+                  const widthPct = Math.max(18, Math.min(100, (m.total_evacuation_time / maxEvacTime) * 100));
                   const isWinner = m.algorithm === comparison.winner;
                   const color = ALGO_COLORS[m.algorithm] || ALGO_COLORS.ALGO_A;
+                  const winnerTime = comparison.metrics[comparison.winner]?.total_evacuation_time || m.total_evacuation_time;
+                  const diffPct = winnerTime > 0 && m.total_evacuation_time > winnerTime 
+                    ? Math.round(((m.total_evacuation_time - winnerTime) / winnerTime) * 100)
+                    : 0;
 
                   return (
                     <div key={m.algorithm} className="space-y-1">
                       <div className="flex justify-between text-xs font-medium">
-                        <span className="text-slate-700">{m.algorithm_name}</span>
-                        <span className={isWinner ? "font-bold text-emerald-700" : "text-slate-900"}>
-                          {m.total_evacuation_time}s
+                        <span className="text-slate-700 flex items-center gap-1.5">
+                          <span className={`w-2.5 h-2.5 rounded-full ${color.bar}`} />
+                          <span className="font-semibold text-slate-800">{m.algorithm_name}</span>
+                          {isWinner && (
+                            <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded shadow-2xs">
+                              Winner
+                            </span>
+                          )}
+                          {m.casualties > 0 && (
+                            <span className="text-[10px] bg-red-100 text-red-700 font-bold px-1.5 py-0.5 rounded">
+                              {m.casualties} Casualties
+                            </span>
+                          )}
                         </span>
+                        <div className="flex items-center space-x-2">
+                          {diffPct > 0 && (
+                            <span className="text-[11px] text-amber-600 font-semibold font-mono">+{diffPct}% slower</span>
+                          )}
+                          <span className={isWinner ? "font-bold text-emerald-700 font-mono text-sm" : "text-slate-900 font-mono font-medium"}>
+                            {m.total_evacuation_time}s
+                          </span>
+                        </div>
                       </div>
-                      <div className="w-full bg-slate-100 rounded-full h-3.5 overflow-hidden flex">
+                      <div className="w-full bg-slate-100 rounded-full h-3.5 overflow-hidden flex shadow-inner">
                         <div 
                           className={`h-full rounded-full transition-all duration-500 ${color.bar}`} 
                           style={{ width: `${widthPct}%` }}
@@ -297,16 +319,38 @@ export default function SimulationsPage() {
                       return `${x.toFixed(1)},${y.toFixed(1)}`;
                     }).join(" ");
 
+                    // Sample points for dots
+                    const sampleInterval = Math.max(1, Math.floor(curve.length / 5));
+                    const sampledPoints = curve.filter((_, idx) => idx % sampleInterval === 0 || idx === curve.length - 1);
+
                     return (
-                      <polyline
-                        key={`curve-${m.algorithm}`}
-                        fill="none"
-                        stroke={color.stroke}
-                        strokeWidth={m.algorithm === comparison.winner ? "3" : "1.8"}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        points={points}
-                      />
+                      <g key={`group-${m.algorithm}`}>
+                        <polyline
+                          fill="none"
+                          stroke={color.stroke}
+                          strokeWidth={m.algorithm === comparison.winner ? "3" : "1.8"}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          points={points}
+                        />
+                        {sampledPoints.map((pt, pIdx) => {
+                          const px = 40 + (pt.time / maxEvacTime) * 340;
+                          const py = 120 - (pt.evacuated / maxOccupants) * 100;
+                          return (
+                            <circle
+                              key={`dot-${m.algorithm}-${pIdx}`}
+                              cx={px}
+                              cy={py}
+                              r={m.algorithm === comparison.winner ? 3.5 : 2.5}
+                              fill={color.stroke}
+                              stroke="#ffffff"
+                              strokeWidth={1.5}
+                            >
+                              <title>{`${m.algorithm_name}: ${pt.evacuated} evacuated at ${pt.time.toFixed(1)}s`}</title>
+                            </circle>
+                          );
+                        })}
+                      </g>
                     );
                   })}
                 </svg>
