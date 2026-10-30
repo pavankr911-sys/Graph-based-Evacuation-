@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { LayoutDashboard, Map, Settings, Users, Activity } from "lucide-react";
+import { LayoutDashboard, Map, Users, Activity } from "lucide-react";
 
 export function Sidebar() {
   const links = [
@@ -7,7 +7,6 @@ export function Sidebar() {
     { name: "Building Editor", href: "/editor", icon: Map },
     { name: "Simulations", href: "/simulations", icon: Activity },
     { name: "Scenarios", href: "/scenarios", icon: Users },
-    { name: "Settings", href: "/settings", icon: Settings },
   ];
 
   return (
