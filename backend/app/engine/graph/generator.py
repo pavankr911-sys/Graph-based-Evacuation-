@@ -49,9 +49,7 @@ class GraphGenerator:
         elif cell_type == CellType.STAIR:
             return "STAIR"
         elif cell_type == CellType.EXIT:
-            # Physical architecture principle: Exterior discharge exits exist strictly on Ground Floor (floor 0).
-            # Any exit placed on upper floors is treated as internal corridor space directing evacuees to stairs.
-            return "EXIT" if floor_number == 0 else "WALKABLE"
+            return "EXIT"
         else:
             return "WALKABLE" # Standard topological fallback
 
@@ -178,13 +176,14 @@ class GraphGenerator:
         for n_id, node in self.nodes.items():
             if node.node_type in ("DOOR", "EXIT", "STAIR"):
                 deg = len(node_neighbors.get(n_id, []))
-                # Doors require at least 2 connections to link room <-> corridor; exits require at least 1
-                required_connections = 2 if node.node_type == "DOOR" else 1
+                # Doors and Exits must be strongly connected to the walkable network on their floor
+                required_connections = 3 if node.node_type in ("DOOR", "EXIT") else 1
                 if deg < required_connections:
                     candidates = [
                         (other_id, other) for other_id, other in self.nodes.items()
                         if other_id != n_id
                         and other.floor_number == node.floor_number
+                        and other.node_type == "WALKABLE"
                         and other_id not in node_neighbors.get(n_id, [])
                     ]
                     candidates.sort(key=lambda item: (item[1].x - node.x)**2 + (item[1].y - node.y)**2)

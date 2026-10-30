@@ -196,10 +196,16 @@ def rasterize_floor(p_floor: PFloor) -> WalkabilityGrid:
                 ):
                     grid.set_cell(cx, cy, CellType.OBSTACLE)
 
-    # 3. Rasterize doors as DOOR (Overwrites OBSTACLES)
+    # 3. Rasterize doors as DOOR (Overwrites wall obstacles and carves clear traversable portal)
     for door in p_floor.doors:
         cx = int(math.floor(door.center.x / res))
         cy = int(math.floor(door.center.y / res))
+        radius_cells = max(1, int(math.ceil((door.width / 2.0) / res)))
+        for dx in range(-radius_cells, radius_cells + 1):
+            for dy in range(-radius_cells, radius_cells + 1):
+                if math.hypot(dx, dy) <= radius_cells + 0.5:
+                    if grid.get_cell(cx + dx, cy + dy) == CellType.OBSTACLE:
+                        grid.set_cell(cx + dx, cy + dy, CellType.WALKABLE)
         grid.set_cell(cx, cy, CellType.DOOR)
 
     # 4. Rasterize stairs as STAIR
@@ -208,10 +214,16 @@ def rasterize_floor(p_floor: PFloor) -> WalkabilityGrid:
         cy = int(math.floor(stair.center.y / res))
         grid.set_cell(cx, cy, CellType.STAIR)
 
-    # 5. Rasterize exits as EXIT (Overwrites boundary wall obstacles)
+    # 5. Rasterize exits as EXIT (Overwrites boundary wall obstacles and carves clear discharge portal)
     for exit_obj in p_floor.exits:
         cx = int(math.floor(exit_obj.center.x / res))
         cy = int(math.floor(exit_obj.center.y / res))
+        radius_cells = max(1, int(math.ceil((exit_obj.width / 2.0) / res)))
+        for dx in range(-radius_cells, radius_cells + 1):
+            for dy in range(-radius_cells, radius_cells + 1):
+                if math.hypot(dx, dy) <= radius_cells + 0.5:
+                    if grid.get_cell(cx + dx, cy + dy) == CellType.OBSTACLE:
+                        grid.set_cell(cx + dx, cy + dy, CellType.WALKABLE)
         grid.set_cell(cx, cy, CellType.EXIT)
 
     return grid
