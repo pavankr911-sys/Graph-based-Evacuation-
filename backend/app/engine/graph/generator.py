@@ -273,13 +273,13 @@ async def persist_graph(
     existing_topo = existing.scalars().first()
     if existing_topo:
         await db.delete(existing_topo)
-        await db.commit()
+        await db.flush()
     
     # 1. Create Topology
     db_topo = GraphTopology(**topology.model_dump(exclude_unset=True))
     db_topo.id = topo_id
     db.add(db_topo)
-    await db.commit()
+    await db.flush()
     
     # 2. Add Nodes in bulk
     nodes_data = []

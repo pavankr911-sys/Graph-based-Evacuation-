@@ -65,6 +65,9 @@ class Navigator:
             if count > 0 and uid in self.node_to_idx
         }
         
+        algo = self.algorithm
+        occ_dict = self.node_occupancy_by_idx
+        
         # Determine exit queue / door congestion penalties for load-aware algorithms
         exit_queue_penalties: Dict[int, float] = {}
         if algo in ["ALGO_C", "ALGO_D"] and occ_dict:
@@ -101,8 +104,6 @@ class Navigator:
                     if idx is not None:
                         hazard_cache[idx] = val
                         
-        algo = self.algorithm
-        occ_dict = self.node_occupancy_by_idx
         adj = self.adj
         
         while pq:

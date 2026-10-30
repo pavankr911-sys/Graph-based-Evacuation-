@@ -80,14 +80,7 @@ export function EditorTopbar() {
       if (!buildingId) {
         setBuildingInfo(idToSave, buildingName);
       }
-      // Silently ensure graph topology is updated and ready
-      try {
-        const graph = await generateGraph(idToSave);
-        setGraph(graph);
-      } catch (gErr) {
-        console.warn("Auto-graph generation on save:", gErr);
-      }
-      alert("Building saved & ready for simulation.");
+      alert("Building saved successfully!");
     } catch (e: any) {
       alert(e.message);
     } finally {
