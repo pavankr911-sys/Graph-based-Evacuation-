@@ -82,6 +82,7 @@ interface EditorState {
   playbackFrameIndex: number;
   isPlayingSimulation: boolean;
   showExitIntelligence: boolean;
+  showOccupantLegend: boolean;
   simulationOccupantCount: number;
   hazardSpreadRate: number;
   
@@ -89,6 +90,7 @@ interface EditorState {
   setPlaybackFrameIndex: (idx: number) => void;
   setIsPlayingSimulation: (isPlay: boolean) => void;
   setShowExitIntelligence: (show: boolean) => void;
+  setShowOccupantLegend: (show: boolean) => void;
   setSimulationOccupantCount: (count: number) => void;
   setHazardSpreadRate: (rate: number) => void;
   clearHazards: () => void;
@@ -375,6 +377,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   playbackFrameIndex: 0,
   isPlayingSimulation: false,
   showExitIntelligence: true,
+  showOccupantLegend: true,
   simulationOccupantCount: 25,
   hazardSpreadRate: 0.15,
 
@@ -397,6 +400,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setPlaybackFrameIndex: (idx) => set({ playbackFrameIndex: idx }),
   setIsPlayingSimulation: (isPlay) => set({ isPlayingSimulation: isPlay }),
   setShowExitIntelligence: (show) => set({ showExitIntelligence: show }),
+  setShowOccupantLegend: (show) => set({ showOccupantLegend: show }),
   setSimulationOccupantCount: (count) => set({ simulationOccupantCount: count }),
   
   getCurrentElements: () => {

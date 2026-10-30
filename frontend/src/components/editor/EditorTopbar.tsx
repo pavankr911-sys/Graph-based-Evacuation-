@@ -18,7 +18,8 @@ export function EditorTopbar() {
     addElements, addFloor, deleteFloor, renameFloor, duplicateFloorStructure,
     setFloorBlueprint, setFloorBlueprintOpacity, getActiveBlueprint, getActiveBlueprintOpacity,
     simulationOccupantCount, setSimulationOccupantCount,
-    hazardSpreadRate, setHazardSpreadRate
+    hazardSpreadRate, setHazardSpreadRate,
+    showOccupantLegend, setShowOccupantLegend
   } = useEditorStore();
 
   const activeFloor = floors.find((f) => f.id === activeFloorId);
@@ -316,6 +317,19 @@ export function EditorTopbar() {
         >
           <Magnet size={16} className="mr-2" />
           Snap
+        </button>
+
+        <button 
+          onClick={() => setShowOccupantLegend(!showOccupantLegend)}
+          className={`flex items-center px-3 py-1.5 rounded-md text-sm font-medium transition-colors border ${
+            showOccupantLegend 
+              ? "bg-indigo-50 text-indigo-700 border-indigo-200" 
+              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+          }`}
+          title="Toggle Evacuee Legend & Demographics"
+        >
+          <Users size={16} className={`mr-1.5 ${showOccupantLegend ? "text-indigo-600" : "text-slate-500"}`} />
+          Legend
         </button>
         
         <button 

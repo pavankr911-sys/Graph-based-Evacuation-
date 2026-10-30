@@ -7,6 +7,7 @@ import { EditorCanvas } from "@/components/editor/EditorCanvas";
 import { EditorCanvas3D } from "@/components/editor/EditorCanvas3D";
 import { SimulationPlayback } from "@/components/editor/SimulationPlayback";
 import { ExitIntelligenceHUD } from "@/components/editor/ExitIntelligenceHUD";
+import { OccupantLegend } from "@/components/editor/OccupantLegend";
 import { useEditorStore } from "@/store/editorStore";
 import { useSearchParams } from "next/navigation";
 import { useEffect, Suspense, useState } from "react";
@@ -85,6 +86,7 @@ function EditorContent() {
         {!is3DMode && <PropertiesPanel />}
         <SimulationPlayback />
         <ExitIntelligenceHUD />
+        <OccupantLegend />
       </div>
     </div>
   );

@@ -8,7 +8,8 @@ export function SimulationPlayback() {
   const { 
     simulationRun, playbackFrameIndex, isPlayingSimulation,
     setPlaybackFrameIndex, setIsPlayingSimulation, setSimulationRun,
-    showExitIntelligence, setShowExitIntelligence
+    showExitIntelligence, setShowExitIntelligence,
+    showOccupantLegend, setShowOccupantLegend
   } = useEditorStore();
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -102,6 +103,20 @@ export function SimulationPlayback() {
       >
         <DoorOpen size={15} className={`mr-1.5 ${showExitIntelligence ? "text-emerald-600" : "text-slate-400"}`} />
         Exit Intel
+      </button>
+
+      {/* Evacuee Legend Toggle */}
+      <button
+        onClick={() => setShowOccupantLegend(!showOccupantLegend)}
+        className={`flex items-center px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+          showOccupantLegend
+            ? "bg-indigo-50 text-indigo-700 border-indigo-300 shadow-xs"
+            : "bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100"
+        }`}
+        title="Toggle Evacuee Demographics & Color Legend"
+      >
+        <Users size={15} className={`mr-1.5 ${showOccupantLegend ? "text-indigo-600" : "text-slate-400"}`} />
+        Legend
       </button>
       
       <button 
