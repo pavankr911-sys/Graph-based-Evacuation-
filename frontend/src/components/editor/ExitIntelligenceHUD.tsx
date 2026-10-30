@@ -4,9 +4,11 @@ import { useMemo, useState } from "react";
 import { useEditorStore } from "@/store/editorStore";
 import { 
   DoorOpen, LogOut, Users, Activity, AlertTriangle, CheckCircle2, 
-  ChevronDown, ChevronUp, ShieldAlert, Sparkles, Clock, Compass 
+  ChevronDown, ChevronUp, ShieldAlert, Sparkles, Clock, Compass,
+  GripHorizontal, RotateCcw
 } from "lucide-react";
 import { Exit } from "@/lib/editor/types";
+import { useDraggableWidget } from "@/lib/editor/useDraggableWidget";
 
 export function ExitIntelligenceHUD() {
   const { 
@@ -15,6 +17,10 @@ export function ExitIntelligenceHUD() {
   } = useEditorStore();
 
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  const { ref, style, dragHandleProps, resetPosition, position } = useDraggableWidget({
+    id: "exit-intelligence-hud"
+  });
 
   const elements = getCurrentElements();
   const activeFloor = floors.find(f => f.id === activeFloorId);
@@ -133,15 +139,23 @@ export function ExitIntelligenceHUD() {
   // Collapsed Minimal Pill
   if (isCollapsed) {
     return (
-      <div className="absolute top-16 right-4 z-40">
+      <div 
+        ref={ref}
+        style={style}
+        data-no-canvas-click="true"
+        className="absolute top-16 right-4 z-40 select-none"
+      >
         <button
+          {...dragHandleProps}
           onClick={() => setIsCollapsed(false)}
-          className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl shadow-lg border backdrop-blur-md transition-all ${
+          className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl shadow-lg border backdrop-blur-md transition-all cursor-grab active:cursor-grabbing ${
             hasBottleneck 
               ? "bg-red-900/90 text-red-100 border-red-700 animate-pulse" 
               : "bg-slate-900/90 text-white border-slate-700 hover:bg-slate-800"
           }`}
+          title="Drag to move anywhere • Click to expand • Double-click to reset"
         >
+          <GripHorizontal size={14} className="text-slate-400 -mr-0.5" />
           <span className={`w-2.5 h-2.5 rounded-full ${hasBottleneck ? "bg-red-400" : "bg-emerald-400"}`} />
           <span className="text-xs font-semibold tracking-wide">
             Exit Intel ({exitStats.length} Exits) • {totalQueue} Queued
@@ -153,11 +167,23 @@ export function ExitIntelligenceHUD() {
   }
 
   return (
-    <div className="absolute top-16 right-4 z-40 w-80 max-h-[calc(100vh-140px)] flex flex-col bg-slate-900/95 backdrop-blur-md text-white rounded-xl shadow-2xl border border-slate-700/80 overflow-hidden transition-all animate-in fade-in slide-in-from-top-2">
+    <div 
+      ref={ref}
+      style={style}
+      data-no-canvas-click="true"
+      className="absolute top-16 right-4 z-40 w-80 max-h-[calc(100vh-140px)] flex flex-col bg-slate-900/95 backdrop-blur-md text-white rounded-xl shadow-2xl border border-slate-700/80 overflow-hidden transition-all animate-in fade-in slide-in-from-top-2 select-none"
+    >
       
-      {/* Header */}
-      <div className="p-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
+      {/* Draggable Header */}
+      <div 
+        {...dragHandleProps}
+        className="p-3.5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60 cursor-grab active:cursor-grabbing"
+        title="Drag header to move anywhere • Double-click to reset position"
+      >
         <div className="flex items-center space-x-2.5">
+          <div className="text-slate-400 hover:text-slate-200 cursor-grab active:cursor-grabbing">
+            <GripHorizontal size={16} />
+          </div>
           <div className={`p-1.5 rounded-lg ${hasBottleneck ? "bg-red-500/20 text-red-400" : "bg-emerald-500/20 text-emerald-400"}`}>
             <DoorOpen size={16} />
           </div>
@@ -167,7 +193,16 @@ export function ExitIntelligenceHUD() {
           </div>
         </div>
 
-        <div className="flex items-center space-x-1">
+        <div className="flex items-center space-x-1" data-no-drag="true">
+          {position && (
+            <button
+              onClick={resetPosition}
+              className="p-1 hover:bg-slate-800 text-slate-400 hover:text-emerald-400 rounded transition-colors"
+              title="Reset position to default dock"
+            >
+              <RotateCcw size={14} />
+            </button>
+          )}
           <button
             onClick={() => setIsCollapsed(true)}
             className="p-1 hover:bg-slate-800 text-slate-400 hover:text-white rounded transition-colors"

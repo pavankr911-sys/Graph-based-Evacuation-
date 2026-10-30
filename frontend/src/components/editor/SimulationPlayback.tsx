@@ -2,7 +2,8 @@
 
 import { useEditorStore } from "@/store/editorStore";
 import { useEffect, useRef } from "react";
-import { Play, Pause, X, DoorOpen, Users } from "lucide-react";
+import { Play, Pause, X, DoorOpen, Users, GripVertical, RotateCcw } from "lucide-react";
+import { useDraggableWidget } from "@/lib/editor/useDraggableWidget";
 
 export function SimulationPlayback() {
   const { 
@@ -12,6 +13,10 @@ export function SimulationPlayback() {
     showOccupantLegend, setShowOccupantLegend
   } = useEditorStore();
   
+  const { ref, style, dragHandleProps, resetPosition, position } = useDraggableWidget({
+    id: "simulation-playback"
+  });
+
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -44,7 +49,21 @@ export function SimulationPlayback() {
   const trappedCount = currentFrame?.agents?.filter((a: any) => a.status === "TRAPPED").length || 0;
   
   return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-2xl border border-slate-200/90 p-3.5 flex items-center space-x-4 z-50 animate-in fade-in slide-in-from-bottom-2">
+    <div 
+      ref={ref}
+      style={style}
+      data-no-canvas-click="true"
+      className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-2xl border border-slate-200/90 p-3.5 flex items-center space-x-3.5 z-50 animate-in fade-in slide-in-from-bottom-2 select-none"
+    >
+      {/* Draggable Grip Handle */}
+      <div 
+        {...dragHandleProps}
+        className="flex items-center text-slate-300 hover:text-slate-600 cursor-grab active:cursor-grabbing px-1 -ml-1 py-1.5 rounded hover:bg-slate-100 transition-colors"
+        title="Click & drag to move playback bar anywhere • Double-click to reset position"
+      >
+        <GripVertical size={18} />
+      </div>
+
       <div className="flex items-center space-x-2">
         <button
           onClick={() => setIsPlayingSimulation(!isPlayingSimulation)}
@@ -118,6 +137,16 @@ export function SimulationPlayback() {
         <Users size={15} className={`mr-1.5 ${showOccupantLegend ? "text-indigo-600" : "text-slate-400"}`} />
         Legend
       </button>
+
+      {position && (
+        <button
+          onClick={resetPosition}
+          className="p-1.5 text-slate-400 hover:text-indigo-600 rounded-full hover:bg-indigo-50 transition-colors"
+          title="Reset playback bar to default center dock"
+        >
+          <RotateCcw size={15} />
+        </button>
+      )}
       
       <button 
         onClick={() => {

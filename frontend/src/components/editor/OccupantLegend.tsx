@@ -4,8 +4,10 @@ import { useState, useMemo } from "react";
 import { useEditorStore } from "@/store/editorStore";
 import { 
   Users, ChevronDown, ChevronUp, Layers, Flame, 
-  DoorOpen, LogOut, ArrowUpDown, X, ShieldCheck
+  DoorOpen, LogOut, ArrowUpDown, X, ShieldCheck,
+  GripHorizontal, RotateCcw
 } from "lucide-react";
+import { useDraggableWidget } from "@/lib/editor/useDraggableWidget";
 
 interface DemographicItem {
   id: string;
@@ -74,6 +76,10 @@ export function OccupantLegend() {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [activeTab, setActiveTab] = useState<"evacuees" | "elements">("evacuees");
 
+  const { ref, style, dragHandleProps, isDragging, resetPosition, position } = useDraggableWidget({
+    id: "occupant-legend"
+  });
+
   // Extract live telemetry for each demographic profile if simulation is playing/loaded
   const liveStats = useMemo(() => {
     if (!simulationRun?.results?.frames) return null;
@@ -104,6 +110,8 @@ export function OccupantLegend() {
   if (isCollapsed) {
     return (
       <div 
+        ref={ref}
+        style={style}
         data-no-canvas-click="true"
         onPointerDown={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
@@ -111,10 +119,12 @@ export function OccupantLegend() {
         className={positionClass}
       >
         <button
+          {...dragHandleProps}
           onClick={() => setIsCollapsed(false)}
-          className="flex items-center gap-2 px-3 py-1.5 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-full shadow-md hover:bg-slate-50 transition-all text-xs font-semibold text-slate-700 cursor-pointer hover:shadow-lg"
-          title="Expand Evacuation Legend & Demographic Profiles"
+          className="flex items-center gap-2 px-3 py-1.5 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-full shadow-md hover:bg-slate-50 transition-all text-xs font-semibold text-slate-700 hover:shadow-lg cursor-grab active:cursor-grabbing"
+          title="Drag anywhere to move • Click to expand • Double-click to reset"
         >
+          <GripHorizontal size={14} className="text-slate-400 -mr-0.5" />
           <Users size={14} className="text-indigo-600" />
           <span>Legend</span>
           <div className="flex items-center -space-x-1 ml-0.5">
@@ -133,15 +143,24 @@ export function OccupantLegend() {
   // --- FULL EXPANDED LEGEND CARD ---
   return (
     <div
+      ref={ref}
+      style={style}
       data-no-canvas-click="true"
       onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
       className={`${positionClass} w-72 bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-slate-200/90 text-slate-800 p-3 transition-all animate-in fade-in slide-in-from-top-2`}
     >
-      {/* Header with Title & Controls */}
-      <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+      {/* Draggable Header with Title, Drag Handle & Controls */}
+      <div 
+        {...dragHandleProps}
+        className="flex items-center justify-between pb-2 border-b border-slate-100 cursor-grab active:cursor-grabbing"
+        title="Drag header to move anywhere • Double-click to reset position"
+      >
         <div className="flex items-center space-x-2">
+          <div className="text-slate-400 hover:text-slate-600 cursor-grab active:cursor-grabbing p-0.5">
+            <GripHorizontal size={15} />
+          </div>
           <div className="p-1 bg-indigo-50 text-indigo-600 rounded-md">
             <Users size={15} />
           </div>
@@ -151,7 +170,16 @@ export function OccupantLegend() {
           </div>
         </div>
 
-        <div className="flex items-center space-x-1">
+        <div className="flex items-center space-x-1" data-no-drag="true">
+          {position && (
+            <button
+              onClick={resetPosition}
+              className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+              title="Reset position to default dock"
+            >
+              <RotateCcw size={13} />
+            </button>
+          )}
           <button
             onClick={() => setIsCollapsed(true)}
             className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded transition-colors"

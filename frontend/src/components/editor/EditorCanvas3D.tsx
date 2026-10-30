@@ -5,7 +5,8 @@ import { useEditorStore } from "@/store/editorStore";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, Html } from "@react-three/drei";
 import { Room, Wall, Exit, Floor } from "@/lib/editor/types";
-import { ZoomIn, ZoomOut, Maximize2, Layers, Compass } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize2, Layers, Compass, GripHorizontal, RotateCcw } from "lucide-react";
+import { useDraggableWidget } from "@/lib/editor/useDraggableWidget";
 import * as THREE from "three";
 
 const FLOOR_HEIGHT = 3;
@@ -625,6 +626,10 @@ export function EditorCanvas3D() {
   const cameraBridgeRef = useRef<any>(null);
   const [activePreset, setActivePreset] = useState<"iso" | "top" | "front" | "side">("iso");
 
+  const { ref, style, dragHandleProps, resetPosition, position } = useDraggableWidget({
+    id: "canvas3d-camera-widget"
+  });
+
   const {
     activeFloorId,
     floors,
@@ -910,27 +915,46 @@ export function EditorCanvas3D() {
           );
         })}
 
-        <AdvancedCameraController
-          cx={cx}
-          cy={cy}
-          buildingBounds={buildingBounds}
-          activeFloorNumber={activeFloorNumber}
-          bridgeRef={cameraBridgeRef}
+        <AdvancedCameraController
+          cx={cx}
+          cy={cy}
+          buildingBounds={buildingBounds}
+          activeFloorNumber={activeFloorNumber}
+          bridgeRef={cameraBridgeRef}
         />
       </Canvas>
 
       {/* Floating 3D Navigation, Camera Presets & Zoom Controls Widget */}
       <div 
+        ref={ref}
+        style={style}
+        data-no-canvas-click="true"
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
         className="absolute top-4 right-4 bg-slate-900/90 backdrop-blur-md border border-slate-700/80 text-white rounded-xl shadow-2xl p-2.5 z-20 flex flex-col space-y-2.5 select-none"
       >
-        <div className="flex items-center justify-between border-b border-slate-700/80 pb-2 px-1">
+        <div 
+          {...dragHandleProps}
+          className="flex items-center justify-between border-b border-slate-700/80 pb-2 px-1 cursor-grab active:cursor-grabbing"
+          title="Drag header to move anywhere • Double-click to reset position"
+        >
           <div className="flex items-center space-x-1.5 text-xs font-bold text-slate-200">
+            <GripHorizontal size={14} className="text-slate-400" />
             <Compass size={14} className="text-indigo-400" />
             <span>3D View & Zoom</span>
           </div>
-          <span className="text-[10px] text-slate-400 font-mono">L{activeFloorNumber}</span>
+          <div className="flex items-center space-x-1" data-no-drag="true">
+            {position && (
+              <button
+                onClick={resetPosition}
+                className="p-1 hover:bg-slate-800 text-slate-400 hover:text-indigo-300 rounded transition-colors"
+                title="Reset position to default top-right"
+              >
+                <RotateCcw size={12} />
+              </button>
+            )}
+            <span className="text-[10px] text-slate-400 font-mono">L{activeFloorNumber}</span>
+          </div>
         </div>
 
         {/* Step Zoom & Fit Buttons */}
