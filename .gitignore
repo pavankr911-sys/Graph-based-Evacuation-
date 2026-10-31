@@ -30,6 +30,10 @@ venv/
 env/
 .env
 
+# CAD Large Raw Files
+*.dxf
+*.dwg
+
 # Database
 *.sqlite
 *.sqlite3
